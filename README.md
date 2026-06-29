@@ -41,7 +41,7 @@ fetch script uses the built-in `fetch`.)
 ## 1. Open the project and install dependencies
 
 ```bash
-cd sparks-analytics      # the unzipped folder
+cd wnba-analytics      # the unzipped folder
 npm install              # one time, downloads dependencies
 ```
 
