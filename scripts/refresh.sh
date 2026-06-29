@@ -5,7 +5,7 @@
 
 REPO="$HOME/source-code/wnba-analytics"
 LOG="$HOME/Library/Logs/wnba-refresh.log"
-BRANCH="master"
+BRANCH="data"
 
 # Make node/npm/git findable from launchd's bare environment.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
