@@ -1,0 +1,48 @@
+name: Refresh WNBA data
+
+# Runs the fetch script on a schedule, commits the new public/data/wnba.json,
+# and pushes. If the repo is connected to Vercel, that push auto-deploys the
+# site with fresh stats — no servers to manage.
+
+on:
+  schedule:
+    - cron: "0 11 * * *" # 11:00 UTC nightly (~3-4am US Pacific). UTC only; adjust as you like.
+  workflow_dispatch: {} # also lets you trigger a refresh by hand from the Actions tab
+
+permissions:
+  contents: write # needed so the workflow can push the updated data file
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Fetch latest stats
+        run: npm run fetch
+
+      # Guard: if stats.wnba.com blocked this runner, the file will have no
+      # teams. Fail here so we never overwrite a good snapshot with an empty one.
+      - name: Sanity-check the data
+        run: |
+          count=$(jq '.teams | length' public/data/wnba.json)
+          echo "teams in snapshot: $count"
+          test "$count" -gt 0
+
+      - name: Commit if the data changed
+        run: |
+          git config user.name "wnba-data-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/wnba.json
+          if git diff --staged --quiet; then
+            echo "No changes — nothing to commit."
+          else
+            git commit -m "chore: nightly WNBA data refresh"
+            git push
+          fi

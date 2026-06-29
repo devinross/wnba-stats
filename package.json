@@ -1,0 +1,22 @@
+{
+  "name": "sparks-analytics",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "fetch": "node scripts/fetch-data.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "refresh": "node scripts/fetch-data.mjs && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
+  }
+}
