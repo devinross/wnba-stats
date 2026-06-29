@@ -338,6 +338,66 @@ async function main() {
       })) }
     : null;
 
+  // Current W-L (from played games) and net rating, keyed by team — used to
+  // annotate each upcoming opponent.
+  const recordByTeam = new Map();
+  for (const r of teamRows) {
+    const rec = recordByTeam.get(r.TEAM_ID) || { w: 0, l: 0 };
+    if (r.WL === "W") rec.w++;
+    else if (r.WL === "L") rec.l++;
+    recordByTeam.set(r.TEAM_ID, rec);
+  }
+  const netByTeam = new Map(ratingRows.map((r) => [r.TEAM_ID, r1(r.NET_RATING)]));
+
+  // ----- schedule → each team's upcoming (not-yet-played) games -----
+  const upcomingByTeam = new Map();
+  let scheduleErr = null;
+  process.stdout.write("  • schedule … ");
+  try {
+    const sched = await statsFetch("scheduleleaguev2", { LeagueID: "10", Season: String(SEASON) });
+    const gameDates = (sched && sched.leagueSchedule && sched.leagueSchedule.gameDates) || [];
+    const cutoff = Date.now() - 18 * 3600 * 1000; // keep games from ~today onward
+    const annotate = (oppTeam) => {
+      const oppId = oppTeam.teamId;
+      const rec = recordByTeam.get(oppId);
+      return {
+        opp: abbrById.get(oppId) || oppTeam.teamTricode || "",
+        oppEmoji: emojiFor(nameById.get(oppId) || `${oppTeam.teamCity || ""} ${oppTeam.teamName || ""}`),
+        oppW: rec ? rec.w : oppTeam.wins ?? 0,
+        oppL: rec ? rec.l : oppTeam.losses ?? 0,
+        oppNet: netByTeam.has(oppId) ? netByTeam.get(oppId) : null,
+      };
+    };
+    let count = 0;
+    for (const gd of gameDates) {
+      for (const g of gd.games || []) {
+        if (g.gameStatus !== 1) continue; // 1 = scheduled, 2 = live, 3 = final
+        const ts = Date.parse(g.gameDateEst || g.gameDateTimeEst || gd.gameDate);
+        if (Number.isFinite(ts) && ts < cutoff) continue;
+        const home = g.homeTeam, away = g.awayTeam;
+        if (!home || !away) continue;
+        const date = fmtDate(g.gameDateEst || gd.gameDate);
+        const sortTs = Number.isFinite(ts) ? ts : 0;
+        const hList = upcomingByTeam.get(home.teamId) || [];
+        hList.push({ date, ts: sortTs, home: true, ...annotate(away) });
+        upcomingByTeam.set(home.teamId, hList);
+        const aList = upcomingByTeam.get(away.teamId) || [];
+        aList.push({ date, ts: sortTs, home: false, ...annotate(home) });
+        upcomingByTeam.set(away.teamId, aList);
+        count++;
+      }
+    }
+    for (const list of upcomingByTeam.values()) {
+      list.sort((a, b) => a.ts - b.ts);
+      list.forEach((x) => delete x.ts); // sorting key only; keep the JSON tidy
+    }
+    console.log(`${count} upcoming games`);
+  } catch (e) {
+    scheduleErr = e.message;
+    console.log(`FAILED — ${e.message}`);
+  }
+  await sleep(DELAY_BETWEEN_CALLS_MS);
+
   // Per-(game, team) box-score totals from the player game log, used to derive
   // four factors for each team and its opponents.
   const boxByGameTeam = new Map(); // key: `${gameId}|${teamId}`
@@ -440,6 +500,7 @@ async function main() {
     const errors = {};
     if (errLeague.playeradv) errors.playerAdv = errLeague.playeradv;
     if (errLeague.ratings) errors.teamRanks = errLeague.ratings;
+    if (scheduleErr) errors.schedule = scheduleErr;
 
     // roster meta (jersey/position)
     const meta = new Map();
@@ -478,12 +539,14 @@ async function main() {
     if (!playerAdv.length && !errors.playerAdv) errors.playerAdv = "No rows returned.";
 
     teams.push({ id: teamId, name: fullName, city, teamName, abbr, emoji });
-    data[teamId] = { games, roster, onOff, fourFactors, playerAdv, lineups, errors };
+    const upcoming = upcomingByTeam.get(teamId) || [];
+    data[teamId] = { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, errors };
 
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
     const flags = [
       plural(games.length, "game"),
       plural(roster.length, "player"),
+      `${upcoming.length} upcoming`,
       errors.onOff ? "on/off ✗" : "on/off ✓",
       errors.lineups ? "lineups ✗" : "lineups ✓",
     ].join(" · ");

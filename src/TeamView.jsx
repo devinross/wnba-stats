@@ -252,7 +252,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [] }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [] }) {
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -677,6 +677,43 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           <Unavailable what="Lineup combinations" detail={errors.lineups} />
         )}
       </Section>
+
+      {/* Upcoming games */}
+      {(upcoming.length > 0 || errors.schedule) && (
+        <Section title="Upcoming games">
+          {upcoming.length > 0 ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 460 }}>
+                <thead>
+                  <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
+                    {["Date", "Matchup", "Opp. record", "Opp. net"].map((h, k) => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: k < 2 ? "left" : "right", fontWeight: 600, borderBottom: `1px solid ${C.LINE}` }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {upcoming.map((g, idx) => (
+                    <tr key={idx} style={{ borderBottom: `1px solid ${C.LINE}55` }}>
+                      <td style={{ padding: "9px 10px", whiteSpace: "nowrap", color: C.MUTE }}>{g.date}</td>
+                      <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>
+                        <span style={{ color: C.MUTE }}>{g.home ? "vs" : "@"}</span>{" "}
+                        <span style={{ marginRight: 5 }}>{g.oppEmoji}</span>
+                        <span style={{ fontWeight: 700 }}>{g.opp}</span>
+                      </td>
+                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700 }}>{g.oppW}-{g.oppL}</td>
+                      <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: g.oppNet == null ? C.MUTE : g.oppNet >= 0 ? C.GOOD : C.LOSS_FG }}>
+                        {g.oppNet == null ? "—" : `${g.oppNet > 0 ? "+" : ""}${g.oppNet.toFixed(1)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Unavailable what="The schedule" detail={errors.schedule} />
+          )}
+        </Section>
+      )}
 
       {/* Results table */}
       <Section title="Results">

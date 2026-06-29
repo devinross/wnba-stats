@@ -90,7 +90,7 @@ function Shell({ league }) {
 
   const team = teams.find((t) => t.id === teamId) || teams[0];
   const bundle = data[teamId] || data[team.id];
-  const { games, roster, onOff, fourFactors, playerAdv, lineups, errors } = bundle;
+  const { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, errors } = bundle;
 
   const teamW = games.filter((g) => g.w).length;
   const teamL = games.length - teamW;
@@ -226,6 +226,7 @@ function Shell({ league }) {
           teamId={teamId}
           teamName={team.teamName}
           teamProfiles={teamProfiles}
+          upcoming={upcoming}
         />
       ) : (
         <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} />
