@@ -3,7 +3,7 @@ import { loadLeague } from "./api";
 
 // Loads the whole-league snapshot once. Returns { loading, error, data } where
 // data is the league object (teams + per-team bundles + shared ranking).
-export function useSparksData() {
+export function useLeagueData() {
   const [state, setState] = useState({ loading: true, error: null, data: null });
 
   useEffect(() => {

@@ -93,7 +93,7 @@ function SplitBar({ label, value, max = 100, color }) {
 function LeaderCard({ label, leader, statKey, unit }) {
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 14, padding: "14px 16px" }}>
-      <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.GOLD, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.ORANGE, fontWeight: 700 }}>{label}</div>
       <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{leader.name}</div>
       <div style={{ fontFamily: "Archivo, sans-serif", fontSize: 26, fontWeight: 800, color: C.TXT, lineHeight: 1.1, marginTop: 2 }}>
         {leader[statKey]}<span style={{ fontSize: 12, color: C.MUTE, fontWeight: 600, marginLeft: 4 }}>{unit}</span>
@@ -134,7 +134,7 @@ function ScoreTooltip({ active, payload }) {
   const d = payload[0].payload;
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 180 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.GOLD, marginBottom: 6 }}>{d.label}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.label}</div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <span style={{ color: C.MUTE }}>Result</span>
         <span style={{ color: d.w ? C.GOOD : C.BAD, fontWeight: 700 }}>{d.w ? "W" : "L"} {d.for}-{d.against}</span>
@@ -158,7 +158,7 @@ function RankTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 200 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.GOLD : C.TXT, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 6 }}>{d.name}</div>
       {row("Net rating", `${d.net > 0 ? "+" : ""}${d.net}`, d.net >= 0 ? C.GOOD : C.BAD)}
       {row("Offense", d.off)}
       {row("Defense", d.def)}
@@ -171,10 +171,10 @@ function FactorTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 180 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.GOLD, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{label}</div>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
-          <span style={{ color: p.dataKey === "team" ? C.GOLD : C.PURPLE_HI }}>{p.dataKey === "team" ? "Team" : "Opponents"}</span>
+          <span style={{ color: p.dataKey === "team" ? C.ORANGE : C.BLUE_HI }}>{p.dataKey === "team" ? "Team" : "Opponents"}</span>
           <span style={{ color: C.TXT, fontWeight: 700 }}>{p.value}</span>
         </div>
       ))}
@@ -193,7 +193,7 @@ function AdvTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 190 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.GOLD, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.name}</div>
       {row("Usage", `${d.usg}%`)}
       {row("True shooting", `${d.ts}%`)}
       {row("Net rating", `${d.net > 0 ? "+" : ""}${d.net}`)}
@@ -227,9 +227,9 @@ function MetricButton({ active, onClick, children }) {
         letterSpacing: 0.5,
         padding: "6px 12px",
         borderRadius: 8,
-        color: active ? C.ON_GOLD : C.TXT,
-        background: active ? C.GOLD : "transparent",
-        border: `1px solid ${active ? C.GOLD : C.LINE}`,
+        color: active ? C.ON_ORANGE : C.TXT,
+        background: active ? C.ORANGE : "transparent",
+        border: `1px solid ${active ? C.ORANGE : C.LINE}`,
         transition: "background .15s ease, color .15s ease",
       }}
     >
@@ -244,7 +244,7 @@ function ProfileTooltip({ active, payload, metric }) {
   const unit = metric && metric.pct ? "%" : "";
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 160 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.GOLD : C.TXT, marginBottom: 4 }}>{d.name}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 4 }}>{d.name}</div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <span style={{ color: C.MUTE }}>{metric ? metric.full : ""}</span>
         <span style={{ color: C.TXT, fontWeight: 700 }}>{d.value}{unit}</span>
@@ -326,7 +326,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       offRank: rankIn(byOff),
       defRank: rankIn(byDef),
       paceRank: rankIn(byPace),
-      sparks: teams.find((t) => t.isSelected) || null,
+      selected: teams.find((t) => t.isSelected) || null,
     };
   }, [teamRanks, teamId]);
 
@@ -398,7 +398,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
     <main style={{ padding: "24px 28px 40px", maxWidth: 1180, margin: "0 auto" }}>
       {/* Headline tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
-        <BigTile label="Record" value={`${team.wins}–${team.losses}`} sub={`${team.winPct}% win rate`} accent={C.GOLD} />
+        <BigTile label="Record" value={`${team.wins}–${team.losses}`} sub={`${team.winPct}% win rate`} accent={C.ORANGE} />
         <BigTile label="Points / game" value={team.ppg} sub={`${team.oppg} allowed`} />
         <BigTile label="Avg margin" value={`${team.margin > 0 ? "+" : ""}${team.margin}`} sub="per game" accent={team.margin >= 0 ? C.GOOD : C.BAD} />
         <BigTile label="Home" value={team.homeRec} />
@@ -427,7 +427,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Points for vs against */}
       <Section
         title="Points scored vs allowed"
-        hint={<span><span style={{ color: C.GOLD }}>● scored</span>{"  "}<span style={{ color: C.PURPLE_HI }}>● allowed</span></span>}
+        hint={<span><span style={{ color: C.ORANGE }}>● scored</span>{"  "}<span style={{ color: C.BLUE_HI }}>● allowed</span></span>}
       >
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -436,13 +436,13 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
             <Tooltip
               contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
-              labelStyle={{ color: C.GOLD }}
+              labelStyle={{ color: C.ORANGE }}
               labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)}
               formatter={(v, key) => [v, key === "for" ? "Scored" : "Allowed"]}
             />
-            <ReferenceLine y={team.ppg} stroke={C.GOLD} strokeDasharray="5 4" strokeOpacity={0.5} />
-            <Line type="monotone" dataKey="for" stroke={C.GOLD} strokeWidth={2.5} dot={{ r: 3, fill: C.GOLD }} activeDot={{ r: 5 }} />
-            <Line type="monotone" dataKey="against" stroke={C.PURPLE_HI} strokeWidth={2.5} dot={{ r: 3, fill: C.PURPLE_HI }} activeDot={{ r: 5 }} />
+            <ReferenceLine y={team.ppg} stroke={C.ORANGE} strokeDasharray="5 4" strokeOpacity={0.5} />
+            <Line type="monotone" dataKey="for" stroke={C.ORANGE} strokeWidth={2.5} dot={{ r: 3, fill: C.ORANGE }} activeDot={{ r: 5 }} />
+            <Line type="monotone" dataKey="against" stroke={C.BLUE_HI} strokeWidth={2.5} dot={{ r: 3, fill: C.BLUE_HI }} activeDot={{ r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </Section>
@@ -461,11 +461,11 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         {/* Team shooting splits */}
         <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
           <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 16px" }}>Team shooting</h3>
-          <SplitBar label="Field goal %" value={shooting.fgPct} color={C.PURPLE_HI} />
-          <SplitBar label="3-point %" value={shooting.tpPct} color={C.GOLD} />
-          <SplitBar label="Free throw %" value={shooting.ftPct} color={C.PURPLE_HI} />
-          <SplitBar label="Effective FG %" value={shooting.efg} max={120} color={C.GOLD} />
-          <SplitBar label="True shooting %" value={shooting.ts} max={120} color={C.PURPLE_HI} />
+          <SplitBar label="Field goal %" value={shooting.fgPct} color={C.BLUE_HI} />
+          <SplitBar label="3-point %" value={shooting.tpPct} color={C.ORANGE} />
+          <SplitBar label="Free throw %" value={shooting.ftPct} color={C.BLUE_HI} />
+          <SplitBar label="Effective FG %" value={shooting.efg} max={120} color={C.ORANGE} />
+          <SplitBar label="True shooting %" value={shooting.ts} max={120} color={C.BLUE_HI} />
           <div style={{ display: "flex", gap: 10, marginTop: 14, fontSize: 11, color: C.MUTE, flexWrap: "wrap" }}>
             <span>FG {shooting.fgm}/{shooting.fga}</span><span>·</span>
             <span>3P {shooting.tpm}/{shooting.tpa}</span><span>·</span>
@@ -488,7 +488,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 </span>
               </div>
               <div style={{ height: 8, background: C.PANEL_2, borderRadius: 6, overflow: "hidden" }}>
-                <div style={{ width: `${(p.share / maxShare) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${C.PURPLE_HI}, ${C.GOLD})`, borderRadius: 6, transition: "width .6s ease" }} />
+                <div style={{ width: `${(p.share / maxShare) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${C.BLUE_HI}, ${C.ORANGE})`, borderRadius: 6, transition: "width .6s ease" }} />
               </div>
             </div>
           ))}
@@ -503,8 +503,9 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             <div style={{ overflowX: "auto" }}>
               <ZoneTable zones={shotZones} league={leagueShotZones} />
               <p style={{ fontSize: 12, color: C.MUTE, margin: "10px 2px 0", lineHeight: 1.5 }}>
-                Season FG% by court zone, with the difference from the league average for that zone.
-                Restricted area / paint are at-rim shots; the corners and above-the-break are the three-point zones.
+                Season FG% by court zone. <strong style={{ color: C.TXT }}>FG% vs lg</strong> is the efficiency gap from the
+                league average for that zone; <strong style={{ color: C.TXT }}>Vol vs lg</strong> is how much more (or less)
+                of this team's shots come from there vs the league, in percentage points of shot share.
               </p>
             </div>
           </div>
@@ -514,14 +515,14 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* League ranking — selected team vs all WNBA teams */}
-      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · gold = ${teamName}`}>
+      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · orange = ${teamName}`}>
         {ranking ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginBottom: 16 }}>
-              <BigTile label="Net rating" value={ranking.sparks ? `${ranking.sparks.net > 0 ? "+" : ""}${ranking.sparks.net}` : "—"} sub={`${ordinal(ranking.netRank)} of ${ranking.total}`} accent={ranking.sparks && ranking.sparks.net >= 0 ? C.GOOD : C.BAD} />
-              <BigTile label="Offense" value={ranking.sparks ? ranking.sparks.off : "—"} sub={`${ordinal(ranking.offRank)} of ${ranking.total}`} accent={C.GOLD} />
-              <BigTile label="Defense" value={ranking.sparks ? ranking.sparks.def : "—"} sub={`${ordinal(ranking.defRank)} of ${ranking.total}`} accent={C.PURPLE_HI} />
-              <BigTile label="Pace" value={ranking.sparks ? ranking.sparks.pace : "—"} sub={`${ordinal(ranking.paceRank)}-fastest of ${ranking.total}`} />
+              <BigTile label="Net rating" value={ranking.selected ? `${ranking.selected.net > 0 ? "+" : ""}${ranking.selected.net}` : "—"} sub={`${ordinal(ranking.netRank)} of ${ranking.total}`} accent={ranking.selected && ranking.selected.net >= 0 ? C.GOOD : C.BAD} />
+              <BigTile label="Offense" value={ranking.selected ? ranking.selected.off : "—"} sub={`${ordinal(ranking.offRank)} of ${ranking.total}`} accent={C.ORANGE} />
+              <BigTile label="Defense" value={ranking.selected ? ranking.selected.def : "—"} sub={`${ordinal(ranking.defRank)} of ${ranking.total}`} accent={C.BLUE_HI} />
+              <BigTile label="Pace" value={ranking.selected ? ranking.selected.pace : "—"} sub={`${ordinal(ranking.paceRank)}-fastest of ${ranking.total}`} />
             </div>
             <ResponsiveContainer width="100%" height={ranking.chart.length * 28 + 40}>
               <BarChart layout="vertical" data={ranking.chart} margin={{ top: 4, right: 24, left: 8, bottom: 4 }}>
@@ -532,7 +533,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <ReferenceLine x={0} stroke={C.MUTE} strokeOpacity={0.6} />
                 <Bar dataKey="net" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                   {ranking.chart.map((t, i) => (
-                    <Cell key={i} fill={t.isSelected ? C.GOLD : C.PURPLE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
+                    <Cell key={i} fill={t.isSelected ? C.ORANGE : C.BLUE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
                   ))}
                 </Bar>
               </BarChart>
@@ -546,7 +547,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Shooting & possession profile vs the WNBA */}
       <Section
         title={`${teamName} profile · vs the WNBA`}
-        hint={`per 100 possessions · gold = ${teamName}`}
+        hint={`per 100 possessions · orange = ${teamName}`}
       >
         {profile ? (
           <>
@@ -559,7 +560,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
               <div>
-                <span style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 26, color: C.GOLD }}>
+                <span style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 26, color: C.ORANGE }}>
                   {profile.selVal != null ? profile.selVal : "—"}{activeMetric.pct ? "%" : ""}
                 </span>
                 <span style={{ color: C.MUTE, fontSize: 13, marginLeft: 8 }}>
@@ -574,10 +575,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <XAxis type="number" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <YAxis type="category" dataKey="abbr" width={46} tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} interval={0} />
                 <Tooltip content={<ProfileTooltip metric={activeMetric} />} cursor={{ fill: C.HOVER_FILL }} />
-                <ReferenceLine x={profile.avg} stroke={C.GOLD} strokeDasharray="5 4" strokeOpacity={0.5} />
+                <ReferenceLine x={profile.avg} stroke={C.ORANGE} strokeDasharray="5 4" strokeOpacity={0.5} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                   {profile.chart.map((t, i) => (
-                    <Cell key={i} fill={t.isSelected ? C.GOLD : C.PURPLE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
+                    <Cell key={i} fill={t.isSelected ? C.ORANGE : C.BLUE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
                   ))}
                 </Bar>
               </BarChart>
@@ -595,7 +596,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Four factors */}
       <Section
         title={`Four factors · ${teamName} vs opponents`}
-        hint={<span><span style={{ color: C.GOLD }}>● {teamName}</span>{"  "}<span style={{ color: C.PURPLE_HI }}>● opponents</span></span>}
+        hint={<span><span style={{ color: C.ORANGE }}>● {teamName}</span>{"  "}<span style={{ color: C.BLUE_HI }}>● opponents</span></span>}
       >
         {ffData ? (
           <>
@@ -605,8 +606,8 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <XAxis dataKey="factor" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <Tooltip content={<FactorTooltip />} cursor={{ fill: C.HOVER_FILL }} />
-                <Bar dataKey="team" fill={C.GOLD} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="opp" fill={C.PURPLE_HI} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="team" fill={C.ORANGE} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="opp" fill={C.BLUE_HI} radius={[4, 4, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
             <p style={{ fontSize: 12, color: C.MUTE, margin: "8px 2px 0", lineHeight: 1.5 }}>
@@ -658,7 +659,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                       <td style={{ padding: "9px 10px", textAlign: "right" }}>{p.astPct}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right" }}>{p.rebPct}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: p.net >= 0 ? C.GOOD : C.LOSS_FG }}>{p.net > 0 ? "+" : ""}{p.net}</td>
-                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700, color: C.GOLD }}>{p.pie}</td>
+                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700, color: C.ORANGE }}>{p.pie}</td>
                     </tr>
                   ))}
                 </tbody>

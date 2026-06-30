@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 // Resolve relative to the current page so it works at the site root or in a
-// subfolder (e.g. /sparks/) without any base-path configuration.
+// subfolder (e.g. /wnba/) without any base-path configuration.
 const DATA_URL = new URL("data/wnba.json", document.baseURI).href;
 
 export async function loadLeague() {

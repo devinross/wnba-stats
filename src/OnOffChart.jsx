@@ -31,7 +31,7 @@ function CustomTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 200 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.GOLD, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.name}</div>
       {row("Offense on/off", `${d.offDiff > 0 ? "+" : ""}${d.offDiff} / 100`, d.offDiff >= 0 ? C.GOOD : C.BAD)}
       {row("Defense on/off", `${d.defDiff > 0 ? "+" : ""}${d.defDiff} / 100`, d.defDiff <= 0 ? C.GOOD : C.BAD)}
       {row("Net impact", `${d.netDiff > 0 ? "+" : ""}${d.netDiff} / 100`, d.netDiff >= 0 ? C.GOOD : C.BAD)}
@@ -75,8 +75,8 @@ export default function OnOffChart({ onOff, selectedName }) {
     return (
       <g>
         <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={selected ? 0.95 : 0.55}
-          stroke={selected ? C.GOLD : fill} strokeWidth={selected ? 2.5 : 1} />
-        <text x={cx + r + 4} y={cy + 4} fill={selected ? C.GOLD : C.TXT} fontSize={11}
+          stroke={selected ? C.ORANGE : fill} strokeWidth={selected ? 2.5 : 1} />
+        <text x={cx + r + 4} y={cy + 4} fill={selected ? C.ORANGE : C.TXT} fontSize={11}
           fontWeight={selected ? 800 : 500} fontFamily="Familjen Grotesk, sans-serif">
           {lastName(payload.name)}
         </text>
@@ -111,8 +111,8 @@ export default function OnOffChart({ onOff, selectedName }) {
             <YAxis type="number" dataKey="y" domain={yDom} reversed tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE}
               label={{ value: "Defensive on/off  (↑ = fewer opp pts per 100)", angle: -90, position: "insideLeft", fill: C.MUTE, fontSize: 12, style: { textAnchor: "middle" } }} />
             <ZAxis type="number" dataKey="z" range={[60, 60]} />
-            <ReferenceLine x={0} stroke={C.GOLD} strokeOpacity={0.5} strokeDasharray="5 4" />
-            <ReferenceLine y={0} stroke={C.GOLD} strokeOpacity={0.5} strokeDasharray="5 4" />
+            <ReferenceLine x={0} stroke={C.ORANGE} strokeOpacity={0.5} strokeDasharray="5 4" />
+            <ReferenceLine y={0} stroke={C.ORANGE} strokeOpacity={0.5} strokeDasharray="5 4" />
             <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3", stroke: C.LINE }} />
             <Scatter data={data} shape={renderDot} isAnimationActive={false} />
           </ScatterChart>

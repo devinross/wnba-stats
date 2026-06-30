@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { C, applyTheme, currentTheme } from "./palette";
-import { useSparksData } from "./useSparksData";
+import { useLeagueData } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
 
@@ -28,9 +28,9 @@ function TabButton({ active, onClick, children }) {
         textTransform: "uppercase",
         padding: "9px 18px",
         borderRadius: 10,
-        color: active ? C.ON_GOLD : C.TXT,
-        background: active ? C.GOLD : "transparent",
-        border: `1px solid ${active ? C.GOLD : C.LINE}`,
+        color: active ? C.ON_ORANGE : C.TXT,
+        background: active ? C.ORANGE : "transparent",
+        border: `1px solid ${active ? C.ORANGE : C.LINE}`,
         transition: "background .2s ease, color .2s ease",
       }}
     >
@@ -68,15 +68,15 @@ function TeamPicker({ teams, value, onChange }) {
           </option>
         ))}
       </select>
-      <span style={{ position: "absolute", right: 4, pointerEvents: "none", color: C.GOLD, fontSize: 13 }}>▾</span>
+      <span style={{ position: "absolute", right: 4, pointerEvents: "none", color: C.ORANGE, fontSize: 13 }}>▾</span>
     </div>
   );
 }
 
 function Shell({ league }) {
-  const { teams, teamRanks, teamProfiles, leagueShotZones, data, meta } = league;
+  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, data, meta } = league;
 
-  const defaultId = (teams.find((t) => /spark/i.test(t.name)) || teams[0]).id;
+  const defaultId = teams[0].id; // first team alphabetically; no team-specific default
   const [teamId, setTeamId] = useState(defaultId);
   const [tab, setTab] = useState("team");
   const [sel, setSel] = useState(0);
@@ -132,10 +132,10 @@ function Shell({ league }) {
               width: 50,
               height: 50,
               borderRadius: 12,
-              background: `linear-gradient(135deg, ${C.PURPLE}, ${C.PURPLE_HI})`,
+              background: `linear-gradient(135deg, ${C.BLUE}, ${C.BLUE_HI})`,
               display: "grid",
               placeItems: "center",
-              border: `1px solid ${C.GOLD}55`,
+              border: `1px solid ${C.ORANGE}55`,
               fontSize: 26,
               lineHeight: 1,
             }}
@@ -144,7 +144,7 @@ function Shell({ league }) {
             {team.emoji}
           </div>
           <div>
-            <div style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: C.GOLD, fontWeight: 700, marginBottom: 1 }}>
+            <div style={{ fontSize: 10, letterSpacing: 2, textTransform: "uppercase", color: C.ORANGE, fontWeight: 700, marginBottom: 1 }}>
               WNBA Analytics
             </div>
             <TeamPicker teams={teams} value={teamId} onChange={pickTeam} />
@@ -231,19 +231,19 @@ function Shell({ league }) {
           leagueShotZones={leagueShotZones}
         />
       ) : (
-        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} />
+        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} positionShotZones={positionShotZones} />
       )}
     </div>
   );
 }
 
 export default function App() {
-  const { loading, error, data: league } = useSparksData();
+  const { loading, error, data: league } = useLeagueData();
 
   if (loading) {
     return (
       <Center>
-        <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 900, fontSize: 22, color: C.GOLD, letterSpacing: 1 }}>
+        <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 900, fontSize: 22, color: C.ORANGE, letterSpacing: 1 }}>
           LOADING WNBA DATA…
         </div>
         <div style={{ color: C.MUTE, marginTop: 8, fontSize: 14 }}>Loading the saved data snapshot.</div>

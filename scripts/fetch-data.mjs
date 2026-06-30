@@ -566,6 +566,11 @@ async function main() {
   }
   const leagueShotZones = [...leagueZoneAgg.values()];
 
+  // Player position by id (from each team's roster), used to build per-position
+  // zone baselines (guards vs forwards) so a player's shot profile is compared
+  // against peers at the same position rather than the whole league.
+  const playerPosById = new Map();
+
   // ----- per-team loops (roster, on/off, lineups) -----
   console.log("Per-team data (roster · on/off · lineups):");
   const teams = [];
@@ -593,7 +598,10 @@ async function main() {
         await statsFetch("commonteamroster", { TeamID: String(teamId), Season: String(SEASON), LeagueID: "10" }),
         "CommonTeamRoster"
       );
-      for (const r of rosterRows) meta.set(r.PLAYER_ID, { num: r.NUM, pos: r.POSITION });
+      for (const r of rosterRows) {
+        meta.set(r.PLAYER_ID, { num: r.NUM, pos: r.POSITION });
+        if (!playerPosById.has(r.PLAYER_ID)) playerPosById.set(r.PLAYER_ID, r.POSITION);
+      }
     } catch (_) { /* jersey/pos are cosmetic */ }
     await sleep(DELAY_BETWEEN_CALLS_MS);
 
@@ -643,12 +651,32 @@ async function main() {
 
   teams.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Per-position zone baselines: aggregate every player's zones into a guard or
+  // forward bucket (by the first letter of their listed position; centers count
+  // as forwards). Players whose position is unknown are left out of the
+  // baselines (the UI falls back to the whole-league baseline for them).
+  const posAgg = {
+    G: new Map(SHOT_ZONES.map(([, key]) => [key, { z: key, m: 0, a: 0 }])),
+    F: new Map(SHOT_ZONES.map(([, key]) => [key, { z: key, m: 0, a: 0 }])),
+  };
+  for (const r of playerZoneRows) {
+    const pos = String(playerPosById.get(r.PLAYER_ID) || "").trim().toUpperCase();
+    if (!pos) continue;
+    const group = pos.charAt(0) === "G" ? "G" : "F";
+    for (const zn of r.zones || []) {
+      const agg = posAgg[group].get(zn.z);
+      if (agg) { agg.m += zn.m; agg.a += zn.a; }
+    }
+  }
+  const positionShotZones = { G: [...posAgg.G.values()], F: [...posAgg.F.values()] };
+
   const payload = {
     meta: { generatedAt: new Date().toISOString(), season: SEASON },
     teams,
     teamRanks,
     teamProfiles,
     leagueShotZones,
+    positionShotZones,
     data,
   };
 

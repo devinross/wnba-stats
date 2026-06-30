@@ -224,7 +224,7 @@ src/
   App.jsx               team dropdown + tabs (Team / Players) + loading / error states
   api.js                loads public/data/wnba.json (no network calls)
   palette.js            light + dark color palettes (edit colors here)
-  useSparksData.js      React hook around the loader
+  useLeagueData.js      React hook around the loader
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)

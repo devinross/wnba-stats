@@ -48,7 +48,15 @@ const ZONE_PATHS = [
   ["ra", "M204,470 L204,425 A46,46 0 0,1 296,425 L296,470 Z"],
 ];
 
-// Display order + full names for the numbers table (matches the court zones).
+// Aggregate rows derived from the base zones (not drawn on the court): corner 3s
+// combine both corners, all 3s add the above-the-break threes.
+const ZONE_AGGREGATES = {
+  c3: ["lc3", "rc3"],
+  all3: ["lc3", "rc3", "atb3"],
+};
+
+// Display order + full names for the numbers table. The first six match the
+// court zones; the last two are aggregate totals separated by a divider.
 const ZONE_ROWS = [
   ["ra", "Restricted area"],
   ["paint", "Paint (non-RA)"],
@@ -56,36 +64,74 @@ const ZONE_ROWS = [
   ["lc3", "Left corner 3"],
   ["rc3", "Right corner 3"],
   ["atb3", "Above the break 3"],
+  ["c3", "Corner 3 (L+R)", true],
+  ["all3", "All 3-pointers", true],
 ];
 
-// Per-zone numbers table: FG%, makes/attempts, and the delta vs the WNBA
-// average for that zone. Reused by the Team and Players tabs next to the court.
-export function ZoneTable({ zones, league }) {
+// The six court zones (everything in ZONE_ROWS that isn't an aggregate total).
+const BASE_ZONE_KEYS = ZONE_ROWS.filter((r) => !r[2]).map((r) => r[0]);
+
+// Resolve a zone's makes/attempts, summing component zones for aggregate keys.
+function zoneTotals(byZone, key) {
+  const parts = ZONE_AGGREGATES[key];
+  if (!parts) return byZone.get(key) || null;
+  let m = 0, a = 0;
+  for (const p of parts) {
+    const z = byZone.get(p);
+    if (z) { m += z.m; a += z.a; }
+  }
+  return { m, a };
+}
+
+// Total attempts across the six base zones (used to turn raw attempts into a
+// shot-distribution share for the volume comparison).
+function totalAttempts(byZone) {
+  let a = 0;
+  for (const k of BASE_ZONE_KEYS) { const z = byZone.get(k); if (z) a += z.a; }
+  return a;
+}
+
+// Per-zone numbers table: FG% and shot share, each shown as a difference vs the
+// baseline (the whole league for teams, same-position peers for players).
+// `baselineLabel` names the baseline in the column headers ("lg", "G", "F").
+// Reused by the Team and Players tabs next to the court.
+export function ZoneTable({ zones, league, baselineLabel = "lg" }) {
   const lByZone = new Map((league || []).map((z) => [z.z, z]));
   const byZone = new Map((zones || []).map((z) => [z.z, z]));
+  const totAtt = totalAttempts(byZone);
+  const baseAtt = totalAttempts(lByZone);
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
       <thead>
         <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
-          {["Zone", "FG%", "FGM/FGA", "vs lg"].map((h, k) => (
+          {["Zone", "FG%", "FGM/FGA", `FG% vs ${baselineLabel}`, `Vol vs ${baselineLabel}`].map((h, k) => (
             <th key={h} style={{ padding: "8px 8px", textAlign: k === 0 ? "left" : "right", fontWeight: 600, borderBottom: `1px solid ${C.LINE}` }}>{h}</th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {ZONE_ROWS.map(([key, name]) => {
-          const z = byZone.get(key);
-          const lz = lByZone.get(key);
-          const pct = z ? pctOf(z.m, z.a) : null;
-          const lp = lz ? pctOf(lz.m, lz.a) : null;
-          const delta = pct != null && lp != null ? r1(pct - lp) : null;
+        {ZONE_ROWS.map(([key, name, agg], i) => {
+          const z = zoneTotals(byZone, key);
+          const lz = zoneTotals(lByZone, key);
+          const pct = z && z.a ? pctOf(z.m, z.a) : null;
+          const lp = lz && lz.a ? pctOf(lz.m, lz.a) : null;
+          const effDelta = pct != null && lp != null ? r1(pct - lp) : null;
+          // Volume = this zone's share of all shot attempts, compared with the
+          // baseline's share for the same zone (percentage points).
+          const share = z && totAtt > 0 ? (z.a / totAtt) * 100 : null;
+          const baseShare = lz && baseAtt > 0 ? (lz.a / baseAtt) * 100 : null;
+          const volDelta = share != null && baseShare != null ? r1(share - baseShare) : null;
+          const firstAgg = agg && !ZONE_ROWS[i - 1]?.[2];
           return (
-            <tr key={key} style={{ borderBottom: `1px solid ${C.LINE}55` }}>
-              <td style={{ padding: "9px 8px", fontWeight: 700, whiteSpace: "nowrap" }}>{name}</td>
+            <tr key={key} style={{ borderBottom: `1px solid ${C.LINE}55`, borderTop: firstAgg ? `2px solid ${C.LINE}` : undefined }}>
+              <td style={{ padding: "9px 8px", fontWeight: 700, whiteSpace: "nowrap", color: agg ? C.MUTE : C.TXT }}>{name}</td>
               <td style={{ padding: "9px 8px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700 }}>{pct == null ? "—" : `${pct}%`}</td>
-              <td style={{ padding: "9px 8px", textAlign: "right", color: C.MUTE }}>{z ? `${z.m}/${z.a}` : "—"}</td>
-              <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 700, color: delta == null ? C.MUTE : delta >= 0 ? C.GOOD : C.LOSS_FG }}>
-                {delta == null ? "—" : `${delta > 0 ? "+" : ""}${delta}`}
+              <td style={{ padding: "9px 8px", textAlign: "right", color: C.MUTE }}>{z && z.a ? `${z.m}/${z.a}` : "—"}</td>
+              <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 700, color: effDelta == null ? C.MUTE : effDelta >= 0 ? C.GOOD : C.LOSS_FG }}>
+                {effDelta == null ? "—" : `${effDelta > 0 ? "+" : ""}${effDelta}`}
+              </td>
+              <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 700, color: volDelta == null ? C.MUTE : C.TXT }}>
+                {volDelta == null ? "—" : `${volDelta > 0 ? "+" : ""}${volDelta}`}
               </td>
             </tr>
           );
@@ -108,9 +154,9 @@ function ToggleButton({ active, onClick, children }) {
         letterSpacing: 0.5,
         padding: "6px 12px",
         borderRadius: 8,
-        color: active ? C.ON_GOLD : C.TXT,
-        background: active ? C.GOLD : "transparent",
-        border: `1px solid ${active ? C.GOLD : C.LINE}`,
+        color: active ? C.ON_ORANGE : C.TXT,
+        background: active ? C.ORANGE : "transparent",
+        border: `1px solid ${active ? C.ORANGE : C.LINE}`,
         transition: "background .15s ease, color .15s ease",
       }}
     >
@@ -119,8 +165,8 @@ function ToggleButton({ active, onClick, children }) {
   );
 }
 
-export default function CourtChart({ zones, league }) {
-  const [mode, setMode] = useState("eff"); // "eff" = vs league · "vol" = shot share
+export default function CourtChart({ zones, league, baseDesc = "the WNBA average" }) {
+  const [mode, setMode] = useState("eff"); // "eff" = vs baseline · "vol" = shot share
 
   const byZone = useMemo(() => {
     const m = new Map();
@@ -150,7 +196,7 @@ export default function CourtChart({ zones, league }) {
     const z = byZone.get(key);
     if (!z || z.a === 0) return { fill: C.PANEL_2, opacity: 0.3 };
     if (mode === "vol") {
-      return { fill: C.GOLD, opacity: 0.14 + 0.6 * (z.a / maxAtt) };
+      return { fill: C.ORANGE, opacity: 0.14 + 0.6 * (z.a / maxAtt) };
     }
     // Efficiency: this zone's FG% minus the league's FG% for the same zone,
     // mapped onto a red→neutral→green scale clamped at ±10 percentage points.
@@ -217,8 +263,8 @@ export default function CourtChart({ zones, league }) {
 
       <p style={{ fontSize: 11, color: C.MUTE, margin: "12px 2px 0", lineHeight: 1.5, textAlign: "center" }}>
         {mode === "eff"
-          ? "Each zone shaded by FG% vs the WNBA average for that zone — green = above, red = below."
-          : "Each zone shaded gold by its share of shot attempts — brighter = more shots taken there."}
+          ? `Each zone shaded by FG% vs ${baseDesc} for that zone — green = above, red = below.`
+          : "Each zone shaded orange by its share of shot attempts — brighter = more shots taken there."}
       </p>
     </div>
   );

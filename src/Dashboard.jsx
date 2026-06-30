@@ -54,9 +54,19 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [] }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null }) {
   const player = roster[sel] || roster[0];
   const agg = useMemo(() => aggregate(player), [sel, roster]);
+
+  // Compare a player's shot zones against same-position peers (guards vs
+  // forwards; centers count as forwards). Falls back to the whole-league
+  // baseline if the position is unknown or that bucket is unavailable.
+  const posGroup = String(player.pos || "").trim().toUpperCase().charAt(0) === "G" ? "G" : "F";
+  const zoneBaseline =
+    (positionShotZones && positionShotZones[posGroup]?.length && positionShotZones[posGroup]) || leagueShotZones;
+  const baselineLabel = positionShotZones && positionShotZones[posGroup]?.length
+    ? (posGroup === "G" ? "guards" : "forwards")
+    : "lg";
 
   const trend = useMemo(
     () => player.logs.map((l) => {
@@ -77,10 +87,10 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
               <button key={p.name + i} onClick={() => setSel(i)} style={{
                 width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12,
                 padding: "10px", marginBottom: 4, borderRadius: 12, cursor: "pointer",
-                border: `1px solid ${active ? C.GOLD + "66" : "transparent"}`,
-                background: active ? `linear-gradient(90deg, ${C.PURPLE}66, ${C.PANEL})` : "transparent" }}>
+                border: `1px solid ${active ? C.ORANGE + "66" : "transparent"}`,
+                background: active ? `linear-gradient(90deg, ${C.BLUE}66, ${C.PANEL})` : "transparent" }}>
                 <div style={{ width: 38, height: 38, borderRadius: 10, flexShrink: 0, display: "grid", placeItems: "center",
-                  background: active ? C.GOLD : C.PANEL_2, color: active ? C.ON_GOLD : C.TXT, fontFamily: "Archivo", fontWeight: 800, fontSize: 13 }}>{initials}</div>
+                  background: active ? C.ORANGE : C.PANEL_2, color: active ? C.ON_ORANGE : C.TXT, fontFamily: "Archivo", fontWeight: 800, fontSize: 13 }}>{initials}</div>
                 <div style={{ overflow: "hidden" }}>
                   <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", color: C.TXT }}>{p.name}</div>
                   <div style={{ fontSize: 11, color: C.MUTE }}>{p.num ? `#${p.num} · ` : ""}{p.pos || "—"} · {p.logs.length} GP</div>
@@ -93,14 +103,14 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
         <main style={{ padding: "24px 28px 40px" }}>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 22 }}>
             <div>
-              <div style={{ fontSize: 12, color: C.GOLD, letterSpacing: 2, textTransform: "uppercase", fontWeight: 700 }}>
+              <div style={{ fontSize: 12, color: C.ORANGE, letterSpacing: 2, textTransform: "uppercase", fontWeight: 700 }}>
                 {player.num ? `#${player.num} · ` : ""}{player.pos === "G" ? "Guard" : player.pos === "F" ? "Forward" : player.pos === "C" ? "Center" : player.pos}
               </div>
               <h1 style={{ fontFamily: "Archivo", fontWeight: 900, fontSize: 44, margin: "2px 0 0", lineHeight: 1 }}>{player.name}</h1>
             </div>
             <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontFamily: "Archivo", fontWeight: 900, fontSize: 26, color: C.GOLD }}>{agg.high}</div>
+                <div style={{ fontFamily: "Archivo", fontWeight: 900, fontSize: 26, color: C.ORANGE }}>{agg.high}</div>
                 <div style={{ fontSize: 10, color: C.MUTE, letterSpacing: 1, textTransform: "uppercase" }}>Season high</div>
               </div>
               <div style={{ textAlign: "center" }}>
@@ -115,7 +125,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 12, marginBottom: 24 }}>
-            <StatTile label="PPG" value={agg.ppg} accent={C.GOLD} />
+            <StatTile label="PPG" value={agg.ppg} accent={C.ORANGE} />
             <StatTile label="RPG" value={agg.rpg} />
             <StatTile label="APG" value={agg.apg} />
             <StatTile label="SPG" value={agg.spg} />
@@ -126,11 +136,11 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 18, marginBottom: 22 }}>
             <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
               <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 16px" }}>Shooting splits</h3>
-              <SplitBar label="Field goal %" value={agg.fgPct} color={C.PURPLE_HI} />
-              <SplitBar label="3-point %" value={agg.tpPct} color={C.GOLD} />
-              <SplitBar label="Free throw %" value={agg.ftPct} color={C.PURPLE_HI} />
-              <SplitBar label="Effective FG %" value={agg.efg} max={120} color={C.GOLD} />
-              <SplitBar label="True shooting %" value={agg.ts} max={120} color={C.PURPLE_HI} />
+              <SplitBar label="Field goal %" value={agg.fgPct} color={C.BLUE_HI} />
+              <SplitBar label="3-point %" value={agg.tpPct} color={C.ORANGE} />
+              <SplitBar label="Free throw %" value={agg.ftPct} color={C.BLUE_HI} />
+              <SplitBar label="Effective FG %" value={agg.efg} max={120} color={C.ORANGE} />
+              <SplitBar label="True shooting %" value={agg.ts} max={120} color={C.BLUE_HI} />
               <div style={{ display: "flex", gap: 10, marginTop: 14, fontSize: 11, color: C.MUTE }}>
                 <span>FG {agg.fgm}/{agg.fga}</span><span>·</span>
                 <span>3P {agg.tpm}/{agg.tpa}</span><span>·</span>
@@ -147,18 +157,18 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <AreaChart data={trend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                   <defs>
                     <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.GOLD} stopOpacity={0.5} />
-                      <stop offset="100%" stopColor={C.GOLD} stopOpacity={0.02} />
+                      <stop offset="0%" stopColor={C.ORANGE} stopOpacity={0.5} />
+                      <stop offset="100%" stopColor={C.ORANGE} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                   <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                   <Tooltip contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
-                    labelStyle={{ color: C.GOLD }} formatter={(v) => [v, "Points"]}
+                    labelStyle={{ color: C.ORANGE }} formatter={(v) => [v, "Points"]}
                     labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)} />
-                  <ReferenceLine y={agg.ppg} stroke={C.PURPLE_HI} strokeDasharray="5 4" />
-                  <Area type="monotone" dataKey="pts" stroke={C.GOLD} strokeWidth={2.5} fill="url(#pg)" dot={{ r: 3, fill: C.GOLD }} activeDot={{ r: 5 }} />
+                  <ReferenceLine y={agg.ppg} stroke={C.BLUE_HI} strokeDasharray="5 4" />
+                  <Area type="monotone" dataKey="pts" stroke={C.ORANGE} strokeWidth={2.5} fill="url(#pg)" dot={{ r: 3, fill: C.ORANGE }} activeDot={{ r: 5 }} />
                 </AreaChart>
               </ResponsiveContainer>
             </section>
@@ -167,13 +177,15 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
               <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: 0 }}>Shooting by zone</h3>
-              <span style={{ fontSize: 11, color: C.MUTE }}>court shaded vs WNBA average · toggle volume</span>
+              <span style={{ fontSize: 11, color: C.MUTE }}>
+                shaded vs WNBA {baselineLabel === "lg" ? "average" : baselineLabel} · toggle volume
+              </span>
             </div>
             {player.shotZones && player.shotZones.some((z) => z.a > 0) ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
-                <CourtChart zones={player.shotZones} league={leagueShotZones} />
+                <CourtChart zones={player.shotZones} league={zoneBaseline} baseDesc={baselineLabel === "lg" ? undefined : `WNBA ${baselineLabel}`} />
                 <div style={{ overflowX: "auto" }}>
-                  <ZoneTable zones={player.shotZones} league={leagueShotZones} />
+                  <ZoneTable zones={player.shotZones} league={zoneBaseline} baselineLabel={baselineLabel === "lg" ? "lg" : posGroup} />
                 </div>
               </div>
             ) : (
@@ -189,10 +201,10 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <XAxis dataKey="name" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} domain={[0, 120]} />
                 <Tooltip contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
-                  labelStyle={{ color: C.GOLD }} formatter={(v) => [`${v}%`, "TS%"]}
+                  labelStyle={{ color: C.ORANGE }} formatter={(v) => [`${v}%`, "TS%"]}
                   labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)} />
-                <ReferenceLine y={agg.ts} stroke={C.GOLD} strokeDasharray="5 4" />
-                <Line type="monotone" dataKey="ts" stroke={C.PURPLE_HI} strokeWidth={2.5} dot={{ r: 3, fill: C.PURPLE_HI }} activeDot={{ r: 5 }} />
+                <ReferenceLine y={agg.ts} stroke={C.ORANGE} strokeDasharray="5 4" />
+                <Line type="monotone" dataKey="ts" stroke={C.BLUE_HI} strokeWidth={2.5} dot={{ r: 3, fill: C.BLUE_HI }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>
           </section>
@@ -223,7 +235,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                           </span>
                         </td>
                         <td style={{ padding: "9px 10px", textAlign: "right", color: C.MUTE }}>{l.min}</td>
-                        <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 800, fontFamily: "Archivo", color: l.pts === agg.high ? C.GOLD : C.TXT }}>{l.pts}</td>
+                        <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 800, fontFamily: "Archivo", color: l.pts === agg.high ? C.ORANGE : C.TXT }}>{l.pts}</td>
                         <td style={{ padding: "9px 10px", textAlign: "right" }}>{l.orb + l.drb}</td>
                         <td style={{ padding: "9px 10px", textAlign: "right" }}>{l.ast}</td>
                         <td style={{ padding: "9px 10px", textAlign: "right" }}>{l.stl}</td>

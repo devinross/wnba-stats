@@ -4,52 +4,52 @@
 // Colors are kept in JS rather than only CSS variables because Recharts passes
 // colors to SVG presentation attributes (stroke="...", fill="..."), where
 // CSS var() does NOT resolve. `C` is a single live object that every component
-// imports and reads as C.GOLD, C.PANEL, etc. On a theme switch we mutate `C`
+// imports and reads as C.ORANGE, C.PANEL, etc. On a theme switch we mutate `C`
 // in place and bump React state, so the next render reads the new colors —
 // including the charts. The page chrome (body background) is themed in CSS via
 // a data-theme attribute so there's no flash before React mounts.
 // ---------------------------------------------------------------------------
 
 const DARK = {
-  INK: "#0E0A14",
-  PURPLE: "#552583",
-  PURPLE_HI: "#7B4FB5",
-  GOLD: "#FDB927",
-  MUTE: "#9B8FB5",
-  PANEL: "#171121",
-  PANEL_2: "#1F1730",
-  LINE: "#2C2240",
-  TXT: "#EDE7F6",
+  INK: "#0A0E16",
+  BLUE: "#1F4E9C",
+  BLUE_HI: "#4F8FD6",
+  ORANGE: "#FB7A2B",
+  MUTE: "#8B96AD",
+  PANEL: "#121826",
+  PANEL_2: "#1A2233",
+  LINE: "#283344",
+  TXT: "#E7ECF4",
   GOOD: "#5BD6A0",
   BAD: "#FF6B6B",
-  ON_GOLD: "#14101D", // dark text/icons placed on a gold fill (both themes)
+  ON_ORANGE: "#10131C", // dark text/icons placed on an orange fill (both themes)
   LOSS_FG: "#FF8088", // softer red for "loss" text and error messages
-  WIN_BG: "#1C3A2E",
+  WIN_BG: "#173A2E",
   LOSS_BG: "#3A1C24",
   HOVER_FILL: "rgba(255,255,255,.04)", // chart hover overlay
   BG_IMAGE:
-    "radial-gradient(1200px 600px at 80% -10%, rgba(85,37,131,.45), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(253,185,39,.08), transparent 55%)",
+    "radial-gradient(1200px 600px at 80% -10%, rgba(31,78,156,.40), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(251,122,43,.08), transparent 55%)",
 };
 
 const LIGHT = {
-  INK: "#FAF9FE",
-  PURPLE: "#552583",
-  PURPLE_HI: "#6E46A6",
-  GOLD: "#C98A00", // deeper gold so it reads on white (and dark text still sits on it)
-  MUTE: "#6E6685",
+  INK: "#F7F9FC",
+  BLUE: "#1F4E9C",
+  BLUE_HI: "#3F7AC2",
+  ORANGE: "#D2590E", // deeper orange so it reads on white (and dark text still sits on it)
+  MUTE: "#5F6B80",
   PANEL: "#FFFFFF",
-  PANEL_2: "#F3F0FA",
-  LINE: "#E5E0F0",
-  TXT: "#1A1426",
+  PANEL_2: "#EEF2F8",
+  LINE: "#DDE4EF",
+  TXT: "#141A26",
   GOOD: "#1F9D6B",
   BAD: "#D64545",
-  ON_GOLD: "#14101D",
+  ON_ORANGE: "#FFFFFF",
   LOSS_FG: "#C53434",
   WIN_BG: "#DCF3E8",
   LOSS_BG: "#FBE3E3",
   HOVER_FILL: "rgba(0,0,0,.05)",
   BG_IMAGE:
-    "radial-gradient(1200px 600px at 80% -10%, rgba(85,37,131,.07), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(201,138,0,.06), transparent 55%)",
+    "radial-gradient(1200px 600px at 80% -10%, rgba(31,78,156,.07), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(210,89,14,.06), transparent 55%)",
 };
 
 export const PALETTES = { dark: DARK, light: LIGHT };
