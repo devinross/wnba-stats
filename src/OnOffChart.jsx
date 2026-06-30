@@ -7,8 +7,12 @@ import {
 
 const MIN_FLOOR = 40; // ignore tiny on-court samples (noisy)
 
+// The on/off endpoint returns names as "Last, First", so the surname is the
+// part before the comma (falling back to the last token for "First Last").
 function lastName(name) {
-  const parts = String(name).trim().split(" ");
+  const s = String(name).trim();
+  if (s.includes(",")) return s.split(",")[0].trim();
+  const parts = s.split(" ");
   return parts[parts.length - 1];
 }
 
