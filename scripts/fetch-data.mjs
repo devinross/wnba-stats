@@ -566,6 +566,21 @@ async function main() {
   }
   const leagueShotZones = [...leagueZoneAgg.values()];
 
+  // League-wide win% + zone shooting per team, for the "shooting profile vs
+  // winning" scatter on the Team tab (does shot selection track with winning?).
+  const teamZoneWins = teamIds
+    .map((tid) => {
+      const rec = recordByTeam.get(tid) || { w: 0, l: 0 };
+      const gp = rec.w + rec.l;
+      return {
+        teamId: tid,
+        abbr: abbrById.get(tid) || lastName(nameById.get(tid) || "").slice(0, 3).toUpperCase(),
+        winPct: gp > 0 ? Math.round((rec.w / gp) * 1000) / 10 : 0,
+        zones: shotZonesByTeam.get(tid) || null,
+      };
+    })
+    .filter((t) => t.zones);
+
   // Player position by id (from each team's roster), used to build per-position
   // zone baselines (guards vs forwards) so a player's shot profile is compared
   // against peers at the same position rather than the whole league.
@@ -677,6 +692,7 @@ async function main() {
     teamProfiles,
     leagueShotZones,
     positionShotZones,
+    teamZoneWins,
     data,
   };
 

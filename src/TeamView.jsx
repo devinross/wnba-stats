@@ -214,6 +214,28 @@ const PROFILE_METRICS = [
   { key: "efg", label: "eFG%", full: "effective FG%", pct: true },
 ];
 
+// Zones for the "shooting profile vs winning" scatter. "Three" combines both
+// corners and above-the-break; the other three map to single court zones.
+const WIN_ZONES = [
+  { key: "ra", label: "Restricted area", parts: ["ra"] },
+  { key: "paint", label: "Paint", parts: ["paint"] },
+  { key: "mid", label: "Mid-range", parts: ["mid"] },
+  { key: "three", label: "Three", parts: ["lc3", "rc3", "atb3"] },
+];
+const BASE_ZONE_KEYS = ["ra", "paint", "mid", "lc3", "rc3", "atb3"];
+
+// A team's metric for a zone: FG% (efficiency) or that zone's share of all the
+// team's shot attempts (volume), as a percentage. Null when there are no shots.
+function zoneMetric(zones, parts, mode) {
+  const map = new Map((zones || []).map((z) => [z.z, z]));
+  let m = 0, a = 0;
+  for (const k of parts) { const z = map.get(k); if (z) { m += z.m; a += z.a; } }
+  if (mode === "eff") return a > 0 ? r1((m / a) * 100) : null;
+  let tot = 0;
+  for (const k of BASE_ZONE_KEYS) { const z = map.get(k); if (z) tot += z.a; }
+  return tot > 0 ? r1((a / tot) * 100) : null;
+}
+
 function MetricButton({ active, onClick, children }) {
   return (
     <button
@@ -253,7 +275,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [] }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [] }) {
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -330,6 +352,39 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
     };
   }, [teamRanks, teamId]);
 
+  // Shooting profile vs winning (league-wide scatter).
+  const [winZone, setWinZone] = useState("three");
+  const [winMode, setWinMode] = useState("eff");
+  const winScatter = useMemo(() => {
+    const zoneDef = WIN_ZONES.find((z) => z.key === winZone) || WIN_ZONES[0];
+    const pts = (teamZoneWins || [])
+      .map((t) => ({
+        abbr: t.abbr,
+        teamId: t.teamId,
+        y: t.winPct,
+        x: zoneMetric(t.zones, zoneDef.parts, winMode),
+        isSelected: t.teamId === teamId,
+      }))
+      .filter((p) => p.x != null);
+    // Least-squares trend line + Pearson correlation, to show how strongly the
+    // chosen shooting metric tracks with winning across the league.
+    let r = null, seg = null;
+    const n = pts.length;
+    if (n >= 2) {
+      const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+      const xb = xs.reduce((a, b) => a + b, 0) / n, yb = ys.reduce((a, b) => a + b, 0) / n;
+      let sxy = 0, sxx = 0, syy = 0;
+      for (let i = 0; i < n; i++) { const dx = xs[i] - xb, dy = ys[i] - yb; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+      if (sxx > 0 && syy > 0) {
+        r = sxy / Math.sqrt(sxx * syy);
+        const slope = sxy / sxx, int = yb - slope * xb;
+        const xmin = Math.min(...xs), xmax = Math.max(...xs);
+        seg = [{ x: xmin, y: r1(slope * xmin + int) }, { x: xmax, y: r1(slope * xmax + int) }];
+      }
+    }
+    return { pts, zoneDef, r, seg, unit: winMode === "eff" ? "FG%" : "shot share" };
+  }, [teamZoneWins, winZone, winMode, teamId]);
+
   // Shooting & possession profile vs the league.
   const [metric, setMetric] = useState("efg");
   const activeMetric = PROFILE_METRICS.find((m) => m.key === metric) || PROFILE_METRICS[0];
@@ -389,6 +444,23 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={0.6} stroke={fill} strokeWidth={1} />
         <text x={cx + r + 4} y={cy + 4} fill={C.TXT} fontSize={11} fontFamily="Familjen Grotesk, sans-serif">
           {lastName(payload.name)}
+        </text>
+      </g>
+    );
+  };
+
+  // One dot per team in the shooting-profile-vs-winning scatter; the selected
+  // team is larger and orange, the rest muted blue, each labelled by abbr.
+  const renderWinDot = (props) => {
+    const { cx, cy, payload } = props;
+    if (cx == null || cy == null) return null;
+    const sel = payload.isSelected;
+    const fill = sel ? C.ORANGE : C.BLUE_HI;
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={sel ? 7 : 5} fill={fill} fillOpacity={sel ? 1 : 0.55} stroke={fill} strokeWidth={sel ? 2 : 1} />
+        <text x={cx + (sel ? 10 : 8)} y={cy + 4} fill={sel ? C.ORANGE : C.MUTE} fontSize={11} fontWeight={sel ? 800 : 600} fontFamily="Archivo, sans-serif">
+          {payload.abbr}
         </text>
       </g>
     );
@@ -767,6 +839,87 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             </tbody>
           </table>
         </div>
+      </Section>
+
+      {/* Shooting profile vs winning — league-wide scatter */}
+      <Section
+        title="Shooting profile vs winning"
+        hint={`each dot = a team · orange = ${teamName}`}
+      >
+        {winScatter.pts.length ? (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+              {WIN_ZONES.map((z) => (
+                <MetricButton key={z.key} active={winZone === z.key} onClick={() => setWinZone(z.key)}>
+                  {z.label}
+                </MetricButton>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+              <MetricButton active={winMode === "eff"} onClick={() => setWinMode("eff")}>Efficiency</MetricButton>
+              <MetricButton active={winMode === "vol"} onClick={() => setWinMode("vol")}>Volume</MetricButton>
+            </div>
+            <div style={{ marginBottom: 6, fontSize: 13, color: C.MUTE }}>
+              {winScatter.zoneDef.label} {winScatter.unit === "FG%" ? "FG%" : "shot share"} vs win %
+              {winScatter.r != null && (
+                <>
+                  {" · "}
+                  <span style={{ color: Math.abs(winScatter.r) >= 0.3 ? C.TXT : C.MUTE, fontWeight: 700 }}>
+                    correlation r = {winScatter.r > 0 ? "+" : ""}{winScatter.r.toFixed(2)}
+                  </span>
+                </>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={360}>
+              <ScatterChart margin={{ top: 16, right: 28, bottom: 28, left: 6 }}>
+                <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" />
+                <XAxis
+                  type="number" dataKey="x"
+                  domain={[(min) => Math.floor(min - 1), (max) => Math.ceil(max + 1)]}
+                  tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE}
+                  label={{ value: `${winScatter.zoneDef.label} ${winScatter.unit === "FG%" ? "FG%" : "shot share %"}  →`, position: "bottom", fill: C.MUTE, fontSize: 12 }}
+                />
+                <YAxis
+                  type="number" dataKey="y"
+                  domain={[(min) => Math.max(0, Math.floor(min - 5)), (max) => Math.min(100, Math.ceil(max + 5))]}
+                  tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE}
+                  label={{ value: "Win %  ↑", angle: -90, position: "insideLeft", fill: C.MUTE, fontSize: 12, style: { textAnchor: "middle" } }}
+                />
+                <ZAxis range={[60, 60]} />
+                {winScatter.seg && (
+                  <ReferenceLine segment={winScatter.seg} stroke={C.ORANGE} strokeDasharray="6 4" strokeOpacity={0.65} ifOverflow="extendDomain" />
+                )}
+                <Tooltip
+                  cursor={{ strokeDasharray: "3 3", stroke: C.LINE }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const d = payload[0].payload;
+                    return (
+                      <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 160 }}>
+                        <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 6 }}>{d.abbr}</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+                          <span style={{ color: C.MUTE }}>Win %</span><span style={{ color: C.TXT, fontWeight: 700 }}>{d.y}%</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+                          <span style={{ color: C.MUTE }}>{winScatter.zoneDef.label} {winScatter.unit === "FG%" ? "FG%" : "share"}</span>
+                          <span style={{ color: C.TXT, fontWeight: 700 }}>{d.x}%</span>
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <Scatter data={winScatter.pts} shape={renderWinDot} isAnimationActive={false} />
+              </ScatterChart>
+            </ResponsiveContainer>
+            <p style={{ fontSize: 12, color: C.MUTE, margin: "8px 2px 0", lineHeight: 1.5 }}>
+              Every WNBA team plotted by its {winScatter.zoneDef.label.toLowerCase()} {winScatter.unit === "FG%" ? "shooting accuracy" : "share of shot attempts"} against
+              win %. The dashed line is the league trend; a steeper line and a larger correlation (r) mean shot profile in
+              this zone tracks more strongly with winning. Toggle efficiency vs volume to compare “shoot it well” against “shoot it often.”
+            </p>
+          </>
+        ) : (
+          <Unavailable what="Team shooting profiles" detail={errors.shotZones} />
+        )}
       </Section>
     </main>
   );

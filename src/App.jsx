@@ -74,7 +74,7 @@ function TeamPicker({ teams, value, onChange }) {
 }
 
 function Shell({ league }) {
-  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, data, meta } = league;
+  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, data, meta } = league;
 
   const defaultId = teams[0].id; // first team alphabetically; no team-specific default
   const [teamId, setTeamId] = useState(defaultId);
@@ -229,6 +229,7 @@ function Shell({ league }) {
           upcoming={upcoming}
           shotZones={shotZones}
           leagueShotZones={leagueShotZones}
+          teamZoneWins={teamZoneWins}
         />
       ) : (
         <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} positionShotZones={positionShotZones} />
