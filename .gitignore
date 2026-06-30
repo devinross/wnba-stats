@@ -5,3 +5,4 @@ dist
 server/config.php
 .DS_Store
 /HOSTING.md
+/.claude

@@ -4,6 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
 } from "recharts";
+import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -53,7 +54,7 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [] }) {
   const player = roster[sel] || roster[0];
   const agg = useMemo(() => aggregate(player), [sel, roster]);
 
@@ -162,6 +163,23 @@ export default function Dashboard({ games, roster, sel, setSel }) {
               </ResponsiveContainer>
             </section>
           </div>
+
+          <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+              <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: 0 }}>Shooting by zone</h3>
+              <span style={{ fontSize: 11, color: C.MUTE }}>court shaded vs WNBA average · toggle volume</span>
+            </div>
+            {player.shotZones && player.shotZones.some((z) => z.a > 0) ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
+                <CourtChart zones={player.shotZones} league={leagueShotZones} />
+                <div style={{ overflowX: "auto" }}>
+                  <ZoneTable zones={player.shotZones} league={leagueShotZones} />
+                </div>
+              </div>
+            ) : (
+              <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No zone shooting data for this player yet.</p>
+            )}
+          </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
             <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 8px" }}>True shooting % trend</h3>

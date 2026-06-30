@@ -74,7 +74,7 @@ function TeamPicker({ teams, value, onChange }) {
 }
 
 function Shell({ league }) {
-  const { teams, teamRanks, teamProfiles, data, meta } = league;
+  const { teams, teamRanks, teamProfiles, leagueShotZones, data, meta } = league;
 
   const defaultId = (teams.find((t) => /spark/i.test(t.name)) || teams[0]).id;
   const [teamId, setTeamId] = useState(defaultId);
@@ -90,7 +90,7 @@ function Shell({ league }) {
 
   const team = teams.find((t) => t.id === teamId) || teams[0];
   const bundle = data[teamId] || data[team.id];
-  const { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, errors } = bundle;
+  const { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, shotZones, errors } = bundle;
 
   const teamW = games.filter((g) => g.w).length;
   const teamL = games.length - teamW;
@@ -227,9 +227,11 @@ function Shell({ league }) {
           teamName={team.teamName}
           teamProfiles={teamProfiles}
           upcoming={upcoming}
+          shotZones={shotZones}
+          leagueShotZones={leagueShotZones}
         />
       ) : (
-        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} />
+        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} />
       )}
     </div>
   );

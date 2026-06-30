@@ -6,6 +6,7 @@ import {
   ScatterChart, Scatter, ZAxis,
 } from "recharts";
 import OnOffChart from "./OnOffChart.jsx";
+import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -252,7 +253,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [] }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [] }) {
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -493,6 +494,24 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           ))}
         </section>
       </div>
+
+      {/* Shooting by zone — court map + numbers */}
+      <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume">
+        {shotZones ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
+            <CourtChart zones={shotZones} league={leagueShotZones} />
+            <div style={{ overflowX: "auto" }}>
+              <ZoneTable zones={shotZones} league={leagueShotZones} />
+              <p style={{ fontSize: 12, color: C.MUTE, margin: "10px 2px 0", lineHeight: 1.5 }}>
+                Season FG% by court zone, with the difference from the league average for that zone.
+                Restricted area / paint are at-rim shots; the corners and above-the-break are the three-point zones.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <Unavailable what="Zone shooting" detail={errors.shotZones} />
+        )}
+      </Section>
 
       {/* League ranking — selected team vs all WNBA teams */}
       <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · gold = ${teamName}`}>

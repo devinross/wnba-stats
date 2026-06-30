@@ -86,7 +86,7 @@ const DASH_COMMON = {
   Rank: "N", Outcome: "", Location: "", Month: "0", SeasonSegment: "",
   DateFrom: "", DateTo: "", OpponentTeamID: "0", VsConference: "", VsDivision: "",
   Conference: "", Division: "", GameScope: "", GameSegment: "", Period: "0",
-  ShotClockRange: "", LastNGames: "0", PORound: "0", TeamID: "0",
+  ShotClockRange: "", LastNGames: "0", PORound: "0", TeamID: "0", DistanceRange: "",
 };
 const TEAM_DASH = { ...DASH_COMMON, PlayerExperience: "", PlayerPosition: "", StarterBench: "" };
 const PLAYER_DASH = { ...TEAM_DASH, College: "", Country: "", DraftPick: "", DraftYear: "", Height: "", Weight: "" };
@@ -126,6 +126,49 @@ async function statsFetch(endpoint, params) {
     throw new Error(detail);
   }
   return res.json();
+}
+
+// The six standard shot zones we keep from leaguedash*shotlocations, mapped to
+// short stable keys. The API also returns "Backcourt" and an aggregate
+// "Corner 3" which we ignore (the two corners are kept separately).
+const SHOT_ZONES = [
+  ["Restricted Area", "ra"],
+  ["In The Paint (Non-RA)", "paint"],
+  ["Mid-Range", "mid"],
+  ["Left Corner 3", "lc3"],
+  ["Right Corner 3", "rc3"],
+  ["Above the Break 3", "atb3"],
+];
+
+// Parse a leaguedash*shotlocations response. Its resultSet has a two-tier
+// header: headers[0].columnNames are the zone names (in order), and
+// headers[1].columnNames is a flat list of a few id columns followed by
+// FGM,FGA,FG_PCT repeated once per zone. We locate each kept zone by its name
+// and read the makes/attempts from the matching triplet. Returns
+// [{ <idField>: ..., zones: [{ z, m, a }] }].
+function shapeShotZones(json, idFields) {
+  let sets = json.resultSets || json.resultSet || [];
+  if (!Array.isArray(sets)) sets = [sets];
+  const set = sets.find((s) => s && s.headers && s.headers.length) || sets[0];
+  if (!set || !set.headers) return [];
+  const zoneNames = (set.headers[0] && set.headers[0].columnNames) || [];
+  const flat = (set.headers[1] && set.headers[1].columnNames) || [];
+  const idCount = flat.length - zoneNames.length * 3; // 2 for teams, 6 for players
+  // Column offset of the FGM cell for each kept zone.
+  const zoneCols = SHOT_ZONES.map(([name, key]) => {
+    const i = zoneNames.indexOf(name);
+    return { key, col: i >= 0 ? idCount + i * 3 : -1 };
+  });
+  return (set.rowSet || []).map((row) => {
+    const o = {};
+    idFields.forEach((f, i) => (o[f] = row[i]));
+    o.zones = zoneCols.map(({ key, col }) => ({
+      z: key,
+      m: col >= 0 ? n(row[col]) : 0,
+      a: col >= 0 ? n(row[col + 1]) : 0,
+    }));
+    return o;
+  });
 }
 
 function toObjects(json, name) {
@@ -194,7 +237,7 @@ function buildRoster(playerRows, teamId, idToIndex, meta) {
     if (gi == null) continue;
     if (!byPlayer.has(r.PLAYER_ID)) {
       const m = meta.get(r.PLAYER_ID) || {};
-      byPlayer.set(r.PLAYER_ID, { name: r.PLAYER_NAME, pos: m.pos || "", num: m.num || "", logs: [] });
+      byPlayer.set(r.PLAYER_ID, { playerId: r.PLAYER_ID, name: r.PLAYER_NAME, pos: m.pos || "", num: m.num || "", logs: [] });
     }
     const pts = n(r.PTS), fga = n(r.FGA), fta = n(r.FTA), fgm = n(r.FGM), tpm = n(r.FG3M);
     const tsDen = 2 * (fga + 0.44 * fta);
@@ -309,6 +352,34 @@ async function main() {
   }
   const ratingRows = await dash("ratings", "leaguedashteamstats", { ...TEAM_DASH, MeasureType: "Advanced", TeamID: "0" }, "LeagueDashTeamStats");
   const advRows = await dash("playeradv", "leaguedashplayerstats", { ...PLAYER_DASH, MeasureType: "Advanced", TeamID: "0" }, "LeagueDashPlayerStats");
+
+  // Shot-location zones (one call each, all teams / all players). These use a
+  // two-tier header, so they go through shapeShotZones rather than the generic
+  // dash() helper. Totals (not PerGame) so league averages aggregate correctly.
+  async function shotDash(label, endpoint, params, idFields) {
+    process.stdout.write(`  • ${label} … `);
+    try {
+      const rows = shapeShotZones(await statsFetch(endpoint, params), idFields);
+      console.log(`${rows.length} rows`);
+      await sleep(DELAY_BETWEEN_CALLS_MS);
+      return rows;
+    } catch (e) {
+      console.log(`FAILED — ${e.message}`);
+      errLeague[label] = e.message;
+      await sleep(DELAY_BETWEEN_CALLS_MS);
+      return [];
+    }
+  }
+  const teamZoneRows = await shotDash(
+    "teamShotZones", "leaguedashteamshotlocations",
+    { ...TEAM_DASH, MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
+    ["TEAM_ID", "TEAM_NAME"]
+  );
+  const playerZoneRows = await shotDash(
+    "playerShotZones", "leaguedashplayershotlocations",
+    { ...PLAYER_DASH, MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
+    ["PLAYER_ID", "PLAYER_NAME"]
+  );
 
   // ----- indexes -----
   const abbrById = new Map();
@@ -482,6 +553,19 @@ async function main() {
     advByTeam.get(r.TEAM_ID).push(r);
   }
 
+  // Shot-zone indexes (team + player), and league totals per zone for the
+  // efficiency-vs-league baseline the court chart compares against.
+  const shotZonesByTeam = new Map(teamZoneRows.map((r) => [r.TEAM_ID, r.zones]));
+  const shotZonesByPlayer = new Map(playerZoneRows.map((r) => [r.PLAYER_ID, r.zones]));
+  const leagueZoneAgg = new Map(SHOT_ZONES.map(([, key]) => [key, { z: key, m: 0, a: 0 }]));
+  for (const r of teamZoneRows) {
+    for (const zn of r.zones || []) {
+      const agg = leagueZoneAgg.get(zn.z);
+      if (agg) { agg.m += zn.m; agg.a += zn.a; }
+    }
+  }
+  const leagueShotZones = [...leagueZoneAgg.values()];
+
   // ----- per-team loops (roster, on/off, lineups) -----
   console.log("Per-team data (roster · on/off · lineups):");
   const teams = [];
@@ -514,6 +598,7 @@ async function main() {
     await sleep(DELAY_BETWEEN_CALLS_MS);
 
     const roster = buildRoster(playerRows, teamId, idToIndex, meta);
+    for (const p of roster) p.shotZones = shotZonesByPlayer.get(p.playerId) || null;
 
     // on/off
     let onOff = [];
@@ -538,9 +623,12 @@ async function main() {
     const playerAdv = shapePlayerAdv(advByTeam.get(teamId) || []);
     if (!playerAdv.length && !errors.playerAdv) errors.playerAdv = "No rows returned.";
 
+    const shotZones = shotZonesByTeam.get(teamId) || null;
+    if (!shotZones && errLeague.teamShotZones) errors.shotZones = errLeague.teamShotZones;
+
     teams.push({ id: teamId, name: fullName, city, teamName, abbr, emoji });
     const upcoming = upcomingByTeam.get(teamId) || [];
-    data[teamId] = { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, errors };
+    data[teamId] = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, upcoming, errors };
 
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
     const flags = [
@@ -560,6 +648,7 @@ async function main() {
     teams,
     teamRanks,
     teamProfiles,
+    leagueShotZones,
     data,
   };
 
