@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
+import StaleNote from "./StaleNote.jsx";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer,
@@ -47,7 +48,7 @@ function CustomTooltip({ active, payload }) {
   );
 }
 
-export default function OnOffChart({ onOff, selectedName }) {
+export default function OnOffChart({ onOff, selectedName, stale }) {
   const data = useMemo(
     () =>
       (onOff || [])
@@ -94,6 +95,7 @@ export default function OnOffChart({ onOff, selectedName }) {
         <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>On/off impact · per 100 possessions</h2>
         <span style={{ fontSize: 11, color: C.MUTE }}>dot size = minutes · top-right = helps both ends</span>
       </div>
+      <StaleNote stale={stale} />
       <p style={{ fontSize: 12, color: C.MUTE, margin: "0 0 6px", lineHeight: 1.5 }}>
         How the team's offense and defense change with each player on vs. off the floor.
         Right = team scores more with them on. Up = team allows fewer (defense axis is

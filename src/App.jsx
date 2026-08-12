@@ -5,6 +5,7 @@ import BrandMark from "./BrandMark.jsx";
 import { useLeagueData } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
+import StaleNote from "./StaleNote.jsx";
 
 function Center({ children }) {
   return (
@@ -361,6 +362,14 @@ function Shell({ league }) {
   const bundle = data[teamId] || data[team.id];
   const { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, shotZones, errors } = bundle;
 
+  // Datasets stats.wnba.com didn't return on the last refresh, which the fetch
+  // script back-filled from the previous snapshot. League-wide and per-team
+  // keys never collide, so one merged map covers every section.
+  const stale = { ...(league.stale || {}), ...(bundle.stale || {}) };
+  // The game log underpins both tabs, so that one gets a page-level banner
+  // rather than a note inside a single section.
+  const staleGames = stale.games || stale.roster;
+
   const updated = meta && meta.generatedAt
     ? new Date(meta.generatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
     : null;
@@ -403,6 +412,14 @@ function Shell({ league }) {
         </TabButton>
       </nav>
 
+      {staleGames && (
+        <div className="hf-container" style={{ paddingTop: 16 }}>
+          <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 12, padding: "10px 14px" }}>
+            <StaleNote stale={staleGames} style={{ margin: 0 }} />
+          </div>
+        </div>
+      )}
+
       {tab === "team" ? (
         <TeamView
           key={teamId}
@@ -414,6 +431,7 @@ function Shell({ league }) {
           playerAdv={playerAdv}
           lineups={lineups}
           errors={errors}
+          stale={stale}
           teamId={teamId}
           teamName={team.teamName}
           teamProfiles={teamProfiles}

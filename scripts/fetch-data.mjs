@@ -484,6 +484,17 @@ async function main() {
       })) }
     : null;
 
+  // The league-wide sets, and a record of which of them had to come from the
+  // previous snapshot. The ranking is back-filled here rather than with the
+  // rest at the end, because the upcoming-opponent rows below read net ratings
+  // out of it — otherwise a failed ratings call would blank that column too.
+  const league = { teamRanks };
+  const leagueStale = carryOver(league, prev, ["teamRanks"], {
+    prevAt,
+    prevStale: (prev && prev.stale) || {},
+    errors: { teamRanks: errLeague.ratings },
+  });
+
   // Current W-L (from played games) and net rating, keyed by team — used to
   // annotate each upcoming opponent.
   const recordByTeam = new Map();
@@ -493,7 +504,8 @@ async function main() {
     else if (r.WL === "L") rec.l++;
     recordByTeam.set(r.TEAM_ID, rec);
   }
-  const netByTeam = new Map(ratingRows.map((r) => [r.TEAM_ID, r1(r.NET_RATING)]));
+  const rankedTeams = (league.teamRanks && league.teamRanks.teams) || [];
+  const netByTeam = new Map(rankedTeams.map((t) => [t.teamId, t.net]));
 
   // ----- schedule → each team's upcoming (not-yet-played) games -----
   const upcomingByTeam = new Map();
@@ -784,19 +796,21 @@ async function main() {
     ? { G: [...posAgg.G.values()], F: [...posAgg.F.values()] }
     : null; // null, not zeroes — see leagueShotZones above
 
-  // Back-fill the league-wide datasets (shared by every team's Team tab).
-  const league = { teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins };
-  const leagueStale = carryOver(league, prev, Object.keys(league), {
-    prevAt,
-    prevStale: (prev && prev.stale) || {},
-    errors: {
-      teamRanks: errLeague.ratings,
-      teamProfiles: playerLogErr,
-      leagueShotZones: errLeague.teamShotZones,
-      positionShotZones: errLeague.playerShotZones,
-      teamZoneWins: errLeague.teamShotZones,
-    },
-  });
+  // Back-fill the rest of the league-wide sets (the ranking was done above).
+  Object.assign(league, { teamProfiles, leagueShotZones, positionShotZones, teamZoneWins });
+  Object.assign(
+    leagueStale,
+    carryOver(league, prev, ["teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"], {
+      prevAt,
+      prevStale: (prev && prev.stale) || {},
+      errors: {
+        teamProfiles: playerLogErr,
+        leagueShotZones: errLeague.teamShotZones,
+        positionShotZones: errLeague.playerShotZones,
+        teamZoneWins: errLeague.teamShotZones,
+      },
+    })
+  );
 
   const payload = {
     meta: { generatedAt: new Date().toISOString(), season: SEASON },

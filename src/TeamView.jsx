@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import OnOffChart from "./OnOffChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
+import StaleNote from "./StaleNote.jsx";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -116,32 +117,6 @@ function Section({ title, hint, stale, children, style }) {
       <StaleNote stale={stale} />
       {children}
     </section>
-  );
-}
-
-// Shown above a section whose numbers came from an earlier snapshot because
-// stats.wnba.com didn't return them on the last refresh. The chart still
-// renders — it just says how old it is.
-export function StaleNote({ stale }) {
-  if (!stale || !stale.at) return null;
-  const when = new Date(stale.at);
-  const date = Number.isNaN(when.getTime())
-    ? null
-    : when.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  return (
-    <p
-      title={stale.reason || undefined}
-      style={{
-        display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
-        fontSize: 11.5, color: C.MUTE, margin: "0 0 12px", lineHeight: 1.5,
-      }}
-    >
-      <span style={{ color: C.BRAND, fontWeight: 700 }}>↺</span>
-      <span>
-        Last refresh didn't return this — showing the numbers from
-        {date ? <strong style={{ color: C.TXT, fontWeight: 700 }}> {date}</strong> : " the previous update"}.
-      </span>
-    </p>
   );
 }
 
@@ -879,6 +854,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       <Section
         title="Shooting profile vs winning"
         hint={`each dot = a team · plum = ${teamName}`}
+        stale={stale.teamZoneWins}
       >
         {winScatter.pts.length ? (
           <>
