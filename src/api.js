@@ -12,9 +12,11 @@
 //                              playerAdv, lineups, errors } } }
 // ---------------------------------------------------------------------------
 
-// Resolve relative to the current page so it works at the site root or in a
-// subfolder (e.g. /wnba/) without any base-path configuration.
-const DATA_URL = new URL("data/wnba.json", document.baseURI).href;
+// Root-absolute, not relative to the current page: the site serves prerendered
+// HTML from nested paths (/team/atlanta-dream/, /team/atlanta-dream/allisha-gray/),
+// and a relative URL would look for the snapshot underneath those. See the note
+// on `base` in vite.config.js.
+const DATA_URL = "/data/wnba.json";
 
 export async function loadLeague() {
   let res;

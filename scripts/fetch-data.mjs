@@ -355,7 +355,9 @@ function isEmpty(v) {
 // carried the key over, its original date is kept rather than restamped, so a
 // section that's been broken for a week reports a week-old date, and ages out
 // at MAX_STALE_DAYS instead of looking fresh forever.
-function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt } = {}) {
+// `expired` collects the keys that were dropped for being too old, so the run
+// can report why a section is about to vanish from the site.
+function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt, expired } = {}) {
   const stale = {};
   if (!prev) return stale;
   const oldest = Date.now() - MAX_STALE_DAYS * 86400000;
@@ -363,7 +365,10 @@ function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt } = 
     if (!isEmpty(fresh[key]) || isEmpty(prev[key])) continue;
     const at = (prevStale[key] && prevStale[key].at) || prevAt;
     const ts = Date.parse(at);
-    if (!Number.isFinite(ts) || ts < oldest) continue;
+    if (!Number.isFinite(ts) || ts < oldest) {
+      if (expired) expired.add(key);
+      continue;
+    }
     fresh[key] = prev[key];
     stale[key] = { at, reason: errors[key] || "the endpoint returned no rows this run" };
   }
@@ -489,10 +494,12 @@ async function main() {
   // rest at the end, because the upcoming-opponent rows below read net ratings
   // out of it — otherwise a failed ratings call would blank that column too.
   const league = { teamRanks };
+  const expired = new Set(); // keys dropped for being older than MAX_STALE_DAYS
   const leagueStale = carryOver(league, prev, ["teamRanks"], {
     prevAt,
     prevStale: (prev && prev.stale) || {},
     errors: { teamRanks: errLeague.ratings },
+    expired,
   });
 
   // Current W-L (from played games) and net rating, keyed by team — used to
@@ -744,19 +751,33 @@ async function main() {
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
-    // A player's game logs index into `games` by position, so those two are only
-    // meaningful as a pair: when the roster has to come from the previous
-    // snapshot, its games must too, or every log would point at the wrong game.
-    if (prevBundle && isEmpty(bundle.roster) && !isEmpty(prevBundle.roster)) bundle.games = [];
-    const fallbackKeys = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
+    const prevStale = (prevBundle && prevBundle.stale) || {};
+    const stale = {};
+
+    // A player's game logs index into `games` by position, so the roster and the
+    // game list are only meaningful together — carry both or neither, never one
+    // snapshot's logs against the other's games. (This is the player game log
+    // failing; both are built from it.)
+    if (isEmpty(bundle.roster) && prevBundle) {
+      const pair = { games: [], roster: [] };
+      const carried = carryOver(pair, prevBundle, ["games", "roster"], {
+        prevAt, prevStale, expired,
+        errors: { games: playerLogErr, roster: playerLogErr },
+      });
+      if (carried.games && carried.roster) {
+        Object.assign(bundle, pair);
+        Object.assign(stale, carried);
+      }
+    }
+
+    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
-    const stale = carryOver(bundle, prevBundle, fallbackKeys, {
-      prevAt,
-      prevStale: (prevBundle && prevBundle.stale) || {},
-      errors: { ...errors, games: playerLogErr, roster: playerLogErr, upcoming: scheduleErr },
-    });
+    Object.assign(stale, carryOver(bundle, prevBundle, fallbackKeys, {
+      prevAt, prevStale, expired,
+      errors: { ...errors, upcoming: scheduleErr },
+    }));
     if (Object.keys(stale).length) bundle.stale = stale;
     data[teamId] = bundle;
 
@@ -809,6 +830,7 @@ async function main() {
         positionShotZones: errLeague.playerShotZones,
         teamZoneWins: errLeague.teamShotZones,
       },
+      expired,
     })
   );
 
@@ -837,6 +859,12 @@ async function main() {
         `${teamsCarried ? ` · per-team sets for ${teamsCarried} of ${teams.length} teams` : ""}`
     );
     console.log(`  (those sections stay on the page, labelled with the date they came from)`);
+  }
+  if (expired.size) {
+    console.log(
+      `  NOT kept (older than ${MAX_STALE_DAYS} days): ${[...expired].join(", ")}` +
+        ` — those sections now show as unavailable`
+    );
   }
   console.log("");
 }

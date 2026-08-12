@@ -353,10 +353,17 @@ function SiteFooter({ updated }) {
 function Shell({ league }) {
   const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, data, meta } = league;
 
-  const defaultId = teams[0].id; // first team alphabetically; no team-specific default
-  const [teamId, setTeamId] = useState(defaultId);
-  const [tab, setTab] = useState("team");
-  const [sel, setSel] = useState(0);
+  // The URL is the source of truth for which team/tab/player is showing. Every
+  // one of those combinations is a real prerendered page (see
+  // scripts/prerender.mjs), so a deep link has to land on the right state and
+  // in-app navigation has to write the matching URL back.
+  const initial = useMemo(
+    () => resolveRoute(typeof window === "undefined" ? "/" : window.location.pathname, league),
+    [league]
+  );
+  const [teamId, setTeamId] = useState(initial.teamId);
+  const [tab, setTab] = useState(initial.tab);
+  const [sel, setSel] = useState(initial.sel);
 
   const team = teams.find((t) => t.id === teamId) || teams[0];
   const bundle = data[teamId] || data[team.id];
@@ -378,6 +385,38 @@ function Shell({ league }) {
     setTeamId(id);
     setSel(0); // reset player selection when switching teams
   };
+
+  // --- URL <-> state ------------------------------------------------------
+  const slugs = useMemo(() => rosterSlugs(roster), [roster]);
+  const path = buildPath({ team, tab, player: slugs[sel] });
+
+  // Push the URL after an in-app change, and keep the head in step with it so
+  // the rendered page matches the prerendered one Google first indexed.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      // Don't rewrite the address bar just because the app booted: "/" is its
+      // own canonical page, not a redirect to the first team.
+      firstRender.current = false;
+      return;
+    }
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+    }
+    applyHead(pageMeta({ team, tab, player: roster[sel], season: meta && meta.season, path }));
+  }, [path]);
+
+  // Back/forward: re-derive state from whatever URL we landed on.
+  useEffect(() => {
+    const onPop = () => {
+      const r = resolveRoute(window.location.pathname, league);
+      setTeamId(r.teamId);
+      setTab(r.tab);
+      setSel(r.sel);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [league]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
