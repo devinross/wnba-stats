@@ -1,89 +1,57 @@
 // ---------------------------------------------------------------------------
-// Theme palette (light + dark).
+// Theme palette + type stack — mirrors the Highlight Factory site
+// (highlight-factory-promo-site/src/palette.js and index.css), which in turn
+// mirrors the iOS app's semantic surfaces. This site is a subdomain of that
+// brand, so the tokens are copied one-for-one rather than reinterpreted.
 //
-// Colors are kept in JS rather than only CSS variables because Recharts passes
-// colors to SVG presentation attributes (stroke="...", fill="..."), where
-// CSS var() does NOT resolve. `C` is a single live object that every component
-// imports and reads as C.ORANGE, C.PANEL, etc. On a theme switch we mutate `C`
-// in place and bump React state, so the next render reads the new colors —
-// including the charts. The page chrome (body background) is themed in CSS via
-// a data-theme attribute so there's no flash before React mounts.
+// Like the marketing site, this is LIGHT-ONLY: white page, white cards
+// separated by a hairline rather than a shadow, black type, brand plum as the
+// accent. There is no night mode and no toggle.
+//
+// Colors live in JS (not only CSS variables) because Recharts passes them into
+// SVG presentation attributes (stroke="...", fill="..."), where CSS var() does
+// NOT resolve. Page chrome that isn't drawn by Recharts is themed in index.css
+// from the same values.
 // ---------------------------------------------------------------------------
 
-const DARK = {
-  INK: "#0A0E16",
-  BLUE: "#1F4E9C",
-  BLUE_HI: "#4F8FD6",
-  ORANGE: "#FB7A2B",
-  MUTE: "#8B96AD",
-  PANEL: "#121826",
-  PANEL_2: "#1A2233",
-  LINE: "#283344",
-  TXT: "#E7ECF4",
-  GOOD: "#5BD6A0",
-  BAD: "#FF6B6B",
-  ON_ORANGE: "#10131C", // dark text/icons placed on an orange fill (both themes)
-  LOSS_FG: "#FF8088", // softer red for "loss" text and error messages
-  WIN_BG: "#173A2E",
-  LOSS_BG: "#3A1C24",
-  HOVER_FILL: "rgba(255,255,255,.04)", // chart hover overlay
-  BG_IMAGE:
-    "radial-gradient(1200px 600px at 80% -10%, rgba(31,78,156,.40), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(251,122,43,.08), transparent 55%)",
-};
+export const C = {
+  INK: "#FFFFFF", // pageBackground
+  BRAND: "#3A1136", // highlightPurple — nav fill + the primary accent
+  BRAND_HI: "#B0507E", // the lighter plum the app's intro card gradients into
+  ACCENT: "#6155F5", // chartBlue — the secondary chart series
+  MUTE: "#737373", // secondaryText
+  PANEL: "#FFFFFF", // cardBackground
+  PANEL_2: "#F5F5F5", // subtleFill — zebra rows, inset wells, tooltips
+  LINE: "#E2E2E2", // cardBorder — the hairline that outlines every card
+  SEPARATOR: "#BFBFBF", // heavier rules inside tables
+  TXT: "#000000", // primaryText
+  GOOD: "#34C759", // ratingGood
+  WARN: "#FFCC00", // ratingFair
+  BAD: "#FF383C", // ratingPoor
+  ON_BRAND: "#FFFFFF", // white type on a plum fill
 
-const LIGHT = {
-  INK: "#F7F9FC",
-  BLUE: "#1F4E9C",
-  BLUE_HI: "#3F7AC2",
-  ORANGE: "#D2590E", // deeper orange so it reads on white (and dark text still sits on it)
-  MUTE: "#5F6B80",
-  PANEL: "#FFFFFF",
-  PANEL_2: "#EEF2F8",
-  LINE: "#DDE4EF",
-  TXT: "#141A26",
-  GOOD: "#1F9D6B",
-  BAD: "#D64545",
-  ON_ORANGE: "#FFFFFF",
-  LOSS_FG: "#C53434",
-  WIN_BG: "#DCF3E8",
-  LOSS_BG: "#FBE3E3",
+  // Rest of the app's categorical chart palette, for series beyond the first two.
+  CHART_MAGENTA: "#CB30E0",
+  CHART_TEAL: "#00C3D0",
+  CHART_BASELINE: "#C7C7CC",
+
+  // --- Tokens this site needs that the marketing pages never do -------------
+  // ratingPoor is tuned for fills; as small text on white it vibrates, so loss
+  // numbers and error copy use a darkened cousin of it.
+  LOSS_FG: "#C7262A",
+  // Result badges: the lightest readable tint of GOOD / BAD.
+  WIN_BG: "#E4F7E9",
+  LOSS_BG: "#FDE8E8",
+  // Recharts hover overlay, on a white page.
   HOVER_FILL: "rgba(0,0,0,.05)",
-  BG_IMAGE:
-    "radial-gradient(1200px 600px at 80% -10%, rgba(31,78,156,.07), transparent 60%), radial-gradient(800px 500px at -10% 110%, rgba(210,89,14,.06), transparent 55%)",
+  // The app's page is plain white; so is this one.
+  BG_IMAGE: "none",
 };
 
-export const PALETTES = { dark: DARK, light: LIGHT };
-
-// The live palette object every component reads from.
-export const C = { ...DARK };
-
-let current = "dark";
-export const currentTheme = () => current;
-
-export function getInitialTheme() {
-  try {
-    const saved = localStorage.getItem("theme");
-    if (saved === "light" || saved === "dark") return saved;
-  } catch (_) {}
-  try {
-    if (typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: light)").matches) {
-      return "light";
-    }
-  } catch (_) {}
-  return "dark";
-}
-
-export function applyTheme(theme) {
-  current = theme === "light" ? "light" : "dark";
-  Object.assign(C, PALETTES[current]); // mutate in place so existing imports see new values
-  try {
-    document.documentElement.setAttribute("data-theme", current);
-  } catch (_) {}
-  try {
-    localStorage.setItem("theme", current);
-  } catch (_) {}
-  return current;
-}
-
-// Initialize at module load (before React renders).
-applyTheme(getInitialTheme());
+// Type stack, matched to the marketing site: JetBrains Mono carries titles,
+// scores and labels; supporting copy is set in the system UI face. Exported as
+// strings because SVG <text fontFamily="..."> is an attribute, not a style, and
+// can't resolve the var(--font-display) that CSS uses for the same thing.
+export const FONT_DISPLAY = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+export const FONT_BODY =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif';

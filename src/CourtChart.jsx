@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { C } from "./palette";
+import { C, FONT_DISPLAY } from "./palette";
 
 // ---------------------------------------------------------------------------
 // CourtChart — a schematic SVG half-court that colors six shot zones either by
@@ -25,7 +25,9 @@ function hexLerp(a, b, t) {
   return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`;
 }
 
-// Zone label text + anchor point (viewBox 0 0 500 470, baseline at the bottom).
+// Zone label text + anchor point. Court coordinates run 0–500 x 0–470 with the
+// baseline at the bottom; the rendered viewBox is padded 8 units wider on each
+// side (see the <svg> below) so edge labels aren't clipped.
 const ZONE_META = {
   ra: { label: "Restricted", x: 250, y: 398 },
   paint: { label: "Paint", x: 250, y: 345 },
@@ -125,7 +127,7 @@ export function ZoneTable({ zones, league, baselineLabel = "lg" }) {
           return (
             <tr key={key} style={{ borderBottom: `1px solid ${C.LINE}55`, borderTop: firstAgg ? `2px solid ${C.LINE}` : undefined }}>
               <td style={{ padding: "9px 8px", fontWeight: 700, whiteSpace: "nowrap", color: agg ? C.MUTE : C.TXT }}>{name}</td>
-              <td style={{ padding: "9px 8px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700 }}>{pct == null ? "—" : `${pct}%`}</td>
+              <td style={{ padding: "9px 8px", textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700 }}>{pct == null ? "—" : `${pct}%`}</td>
               <td style={{ padding: "9px 8px", textAlign: "right", color: C.MUTE }}>{z && z.a ? `${z.m}/${z.a}` : "—"}</td>
               <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 700, color: effDelta == null ? C.MUTE : effDelta >= 0 ? C.GOOD : C.LOSS_FG }}>
                 {effDelta == null ? "—" : `${effDelta > 0 ? "+" : ""}${effDelta}`}
@@ -145,18 +147,19 @@ function ToggleButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
+      className="pill-toggle"
       style={{
         appearance: "none",
         cursor: "pointer",
-        fontFamily: "Archivo, sans-serif",
+        fontFamily: FONT_DISPLAY,
         fontWeight: 700,
         fontSize: 12,
         letterSpacing: 0.5,
         padding: "6px 12px",
-        borderRadius: 8,
-        color: active ? C.ON_ORANGE : C.TXT,
-        background: active ? C.ORANGE : "transparent",
-        border: `1px solid ${active ? C.ORANGE : C.LINE}`,
+        borderRadius: 999, // capsule, like every other button in the brand
+        color: active ? C.ON_BRAND : C.TXT,
+        background: active ? C.BRAND : "transparent",
+        border: `1px solid ${active ? C.BRAND : C.LINE}`,
         transition: "background .15s ease, color .15s ease",
       }}
     >
@@ -196,7 +199,7 @@ export default function CourtChart({ zones, league, baseDesc = "the WNBA average
     const z = byZone.get(key);
     if (!z || z.a === 0) return { fill: C.PANEL_2, opacity: 0.3 };
     if (mode === "vol") {
-      return { fill: C.ORANGE, opacity: 0.14 + 0.6 * (z.a / maxAtt) };
+      return { fill: C.BRAND, opacity: 0.14 + 0.6 * (z.a / maxAtt) };
     }
     // Efficiency: this zone's FG% minus the league's FG% for the same zone,
     // mapped onto a red→neutral→green scale clamped at ±10 percentage points.
@@ -220,7 +223,11 @@ export default function CourtChart({ zones, league, baseDesc = "the WNBA average
         </ToggleButton>
       </div>
 
-      <svg viewBox="0 0 500 470" width="100%" style={{ display: "block", maxWidth: 460, margin: "0 auto" }}>
+      {/* The viewBox is 8 units wider than the 0–500 court on each side purely as
+          breathing room: the corner-zone labels are centred on narrow zones at
+          the edges, so at phone widths they were being clipped by the SVG
+          boundary. Nothing in the geometry moves. */}
+      <svg viewBox="-8 0 516 470" width="100%" style={{ display: "block", maxWidth: 460, margin: "0 auto" }}>
         {/* Zone fills */}
         {ZONE_PATHS.map(([key, d]) => {
           const { fill, opacity } = fillFor(key);
@@ -250,7 +257,7 @@ export default function CourtChart({ zones, league, baseDesc = "the WNBA average
               <text x={meta.x} y={meta.y - 12} fontSize={10} fontWeight={600} fill={C.MUTE}>
                 {meta.label}
               </text>
-              <text x={meta.x} y={meta.y + 6} fontSize={17} fontWeight={800} fontFamily="Archivo, sans-serif" fill={C.TXT}>
+              <text x={meta.x} y={meta.y + 6} fontSize={17} fontWeight={700} fontFamily={FONT_DISPLAY} fill={C.TXT}>
                 {pct == null ? "—" : `${pct}%`}
               </text>
               <text x={meta.x} y={meta.y + 20} fontSize={10} fill={C.MUTE}>
@@ -264,7 +271,7 @@ export default function CourtChart({ zones, league, baseDesc = "the WNBA average
       <p style={{ fontSize: 11, color: C.MUTE, margin: "12px 2px 0", lineHeight: 1.5, textAlign: "center" }}>
         {mode === "eff"
           ? `Each zone shaded by FG% vs ${baseDesc} for that zone — green = above, red = below.`
-          : "Each zone shaded orange by its share of shot attempts — brighter = more shots taken there."}
+          : "Each zone shaded plum by its share of shot attempts — brighter = more shots taken there."}
       </p>
     </div>
   );

@@ -104,6 +104,11 @@ step:
 npm run refresh
 ```
 
+`npm run build` runs `scripts/build-seo.mjs` after Vite. See
+[Search engines & sharing](#search-engines--sharing) for what that does and why
+it matters — the short version is that it puts real, crawlable content into
+`dist/index.html`, which would otherwise ship as an empty `<div id="root">`.
+
 ---
 
 ## 5. Upload to Bluehost
@@ -125,12 +130,77 @@ That's it. Load your domain and the dashboard appears.
 
 ---
 
-## Light & dark mode
+## Branding & theme
 
-There's a sun/moon button in the toolbar (next to the Team / Players tabs) that
-toggles a white (light) or dark interface. The choice is remembered in the
-browser, and first-time visitors get whichever matches their device setting.
-To tweak the actual colors for either theme, edit `src/palette.js`.
+This site is a subdomain of Highlight Factory (`wnba.highlightfactory.app`) and
+shares that brand's design language, copied from the marketing site
+(`highlight-factory-promo-site`):
+
+- **Type** — JetBrains Mono on titles, scores and labels; the system UI face on
+  supporting copy. Both are exported from `src/palette.js` as `FONT_DISPLAY` /
+  `FONT_BODY`, and mirrored as `--font-display` / `--font-body` in
+  `src/index.css`. Components must use those rather than naming a family, since
+  SVG `fontFamily` attributes can't resolve CSS variables.
+- **Color** — white page, white cards separated by a hairline (never a shadow),
+  black type, brand plum `#3A1136` as the accent and chart blue `#6155F5` as the
+  secondary series. Edit `src/palette.js` to change any of it; keep
+  `src/index.css` in sync, since the two describe the same tokens for different
+  consumers (Recharts vs. page chrome).
+- **Light only.** Like the main site, there is no night mode and no toggle.
+- **Header/footer** — `src/App.jsx` carries a header matched to the marketing
+  site's (`BrandMark` + "WNBA Stats / powered by Highlight Factory", mono nav,
+  plum download capsule). The links back to the main site live in
+  `src/config.js`.
+
+## Search engines & sharing
+
+This is a client-rendered React app, which is the one thing search engines
+handle badly: without help, the deployed `dist/index.html` is literally
+`<div id="root"></div>`. Google will execute the JavaScript and eventually see
+the real page, but social scrapers, most AI crawlers, and Google's first pass
+won't. Three things address that:
+
+- **`scripts/build-seo.mjs`** runs as part of `npm run build`. It injects a
+  static summary into `#root` (what the dashboard covers, plus the real team
+  list and season read from `public/data/wnba.json`) and a JSON-LD block
+  (`WebSite`, `Organization`, `Dataset`) into `<head>`. React replaces the
+  summary the instant it mounts, so nobody sees it for more than a frame — but
+  because both come from the same snapshot, the summary can't drift from the
+  app. The nightly refresh keeps `dateModified` and the season current for free.
+- **Headings.** The `<h1>` is the selected team (in `TeamPicker`), with the city
+  and season attached in an `.sr-only` span since the visible design only has
+  room for the short name. Section headings are `<h2>`; on the Players tab the
+  player name is the `<h2>` and its sections are `<h3>`.
+- **`public/og.png`** is the 1200x630 share card. It is *generated*, not drawn
+  by hand — edit `scripts/og-template.html` and run:
+
+  ```bash
+  npm run og
+  ```
+
+  That renders the template with a local headless Chrome and writes the PNG.
+  It's deliberately kept out of `npm run build` (it needs a browser on the
+  machine and the network for the webfont), so commit the PNG when it changes.
+
+Canonical URL, robots and sitemap all name `wnba.highlightfactory.app` — see the
+note in `HOSTING.md` about the four places to update if that ever changes.
+
+## Mobile
+
+The dashboard is dense, so a few layouts are explicitly re-flowed for phones
+(all in `src/index.css`, no separate mobile build):
+
+- Below 820px the header nav collapses to a menu button and the Players tab's
+  roster rail becomes a scrollable band above the stats instead of a side rail.
+- Below 720px the paired panels (`.split-2`) stack, and lineup rows
+  (`.lineup-row`) move their net-rating bar to a second line so the player names
+  keep their width.
+- Wide stat tables never squeeze — they scroll inside `.scroll-x`, which paints
+  a fade on the right edge as the only available hint on a device with no
+  resting scrollbar.
+- On touch devices (`hover: none`), the pill toggles, footer links and the team
+  picker get larger hit areas. The picker grows via an invisible overlay so the
+  visible label doesn't move.
 
 ## Refreshing / updating the data
 
@@ -223,12 +293,14 @@ src/
   main.jsx              boots React
   App.jsx               team dropdown + tabs (Team / Players) + loading / error states
   api.js                loads public/data/wnba.json (no network calls)
-  palette.js            light + dark color palettes (edit colors here)
+  palette.js            brand colors + type stack (edit colors here)
+  config.js             site name, canonical URL, links back to highlightfactory.app
+  BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
   useLeagueData.js      React hook around the loader
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
-  index.css             fonts + page background
+  index.css             brand tokens, typography, shared .hf-* classes
 server/
   wnba.php              NOT USED anymore - the old live proxy; safe to delete
 ```

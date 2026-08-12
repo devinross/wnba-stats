@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { C } from "./palette";
+import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import {
   BarChart, Bar, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
@@ -67,10 +67,14 @@ function leaderOf(players, key) {
 }
 
 function BigTile({ label, value, sub, accent }) {
+  // Mono digits are wide, so a long value ("W L W L W") would wrap onto a second
+  // line and make one tile taller than its neighbours. Step the display size
+  // down instead so every tile in the row stays the same height.
+  const size = String(value).length > 6 ? 22 : 32;
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 14, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 3 }}>
       <span style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: C.MUTE, fontWeight: 600 }}>{label}</span>
-      <span style={{ fontFamily: "Archivo, sans-serif", fontSize: 32, fontWeight: 800, lineHeight: 1, color: accent || C.TXT }}>{value}</span>
+      <span style={{ fontFamily: FONT_DISPLAY, fontSize: size, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", color: accent || C.TXT }}>{value}</span>
       {sub != null && <span style={{ fontSize: 12, color: C.MUTE }}>{sub}</span>}
     </div>
   );
@@ -81,7 +85,7 @@ function SplitBar({ label, value, max = 100, color }) {
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
         <span style={{ fontSize: 12, color: C.MUTE, fontWeight: 600, letterSpacing: 0.5 }}>{label}</span>
-        <span style={{ fontSize: 13, color: C.TXT, fontWeight: 700, fontFamily: "Archivo, sans-serif" }}>{value}%</span>
+        <span style={{ fontSize: 13, color: C.TXT, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{value}%</span>
       </div>
       <div style={{ height: 7, background: C.PANEL, borderRadius: 6, overflow: "hidden" }}>
         <div style={{ width: `${Math.min((value / max) * 100, 100)}%`, height: "100%", background: color, borderRadius: 6, transition: "width .6s ease" }} />
@@ -93,9 +97,9 @@ function SplitBar({ label, value, max = 100, color }) {
 function LeaderCard({ label, leader, statKey, unit }) {
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 14, padding: "14px 16px" }}>
-      <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.ORANGE, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.BRAND, fontWeight: 700 }}>{label}</div>
       <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{leader.name}</div>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontSize: 26, fontWeight: 800, color: C.TXT, lineHeight: 1.1, marginTop: 2 }}>
+      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 26, fontWeight: 700, color: C.TXT, lineHeight: 1.1, marginTop: 2 }}>
         {leader[statKey]}<span style={{ fontSize: 12, color: C.MUTE, fontWeight: 600, marginLeft: 4 }}>{unit}</span>
       </div>
     </div>
@@ -106,7 +110,7 @@ function Section({ title, hint, children, style }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22, ...style }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-        <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: 0 }}>{title}</h3>
+        <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>{title}</h2>
         {hint && <span style={{ fontSize: 11, color: C.MUTE }}>{hint}</span>}
       </div>
       {children}
@@ -134,7 +138,7 @@ function ScoreTooltip({ active, payload }) {
   const d = payload[0].payload;
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 180 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.label}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.BRAND, marginBottom: 6 }}>{d.label}</div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <span style={{ color: C.MUTE }}>Result</span>
         <span style={{ color: d.w ? C.GOOD : C.BAD, fontWeight: 700 }}>{d.w ? "W" : "L"} {d.for}-{d.against}</span>
@@ -158,7 +162,7 @@ function RankTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 200 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: d.isSelected ? C.BRAND : C.TXT, marginBottom: 6 }}>{d.name}</div>
       {row("Net rating", `${d.net > 0 ? "+" : ""}${d.net}`, d.net >= 0 ? C.GOOD : C.BAD)}
       {row("Offense", d.off)}
       {row("Defense", d.def)}
@@ -171,10 +175,10 @@ function FactorTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 180 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.BRAND, marginBottom: 6 }}>{label}</div>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
-          <span style={{ color: p.dataKey === "team" ? C.ORANGE : C.BLUE_HI }}>{p.dataKey === "team" ? "Team" : "Opponents"}</span>
+          <span style={{ color: p.dataKey === "team" ? C.BRAND : C.ACCENT }}>{p.dataKey === "team" ? "Team" : "Opponents"}</span>
           <span style={{ color: C.TXT, fontWeight: 700 }}>{p.value}</span>
         </div>
       ))}
@@ -193,7 +197,7 @@ function AdvTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 190 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.BRAND, marginBottom: 6 }}>{d.name}</div>
       {row("Usage", `${d.usg}%`)}
       {row("True shooting", `${d.ts}%`)}
       {row("Net rating", `${d.net > 0 ? "+" : ""}${d.net}`)}
@@ -240,18 +244,19 @@ function MetricButton({ active, onClick, children }) {
   return (
     <button
       onClick={onClick}
+      className="pill-toggle"
       style={{
         appearance: "none",
         cursor: "pointer",
-        fontFamily: "Archivo, sans-serif",
+        fontFamily: FONT_DISPLAY,
         fontWeight: 700,
         fontSize: 12,
         letterSpacing: 0.5,
         padding: "6px 12px",
-        borderRadius: 8,
-        color: active ? C.ON_ORANGE : C.TXT,
-        background: active ? C.ORANGE : "transparent",
-        border: `1px solid ${active ? C.ORANGE : C.LINE}`,
+        borderRadius: 999, // capsule, like every other button in the brand
+        color: active ? C.ON_BRAND : C.TXT,
+        background: active ? C.BRAND : "transparent",
+        border: `1px solid ${active ? C.BRAND : C.LINE}`,
         transition: "background .15s ease, color .15s ease",
       }}
     >
@@ -266,7 +271,7 @@ function ProfileTooltip({ active, payload, metric }) {
   const unit = metric && metric.pct ? "%" : "";
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 160 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 4 }}>{d.name}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: d.isSelected ? C.BRAND : C.TXT, marginBottom: 4 }}>{d.name}</div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <span style={{ color: C.MUTE }}>{metric ? metric.full : ""}</span>
         <span style={{ color: C.TXT, fontWeight: 700 }}>{d.value}{unit}</span>
@@ -442,7 +447,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
     return (
       <g>
         <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={0.6} stroke={fill} strokeWidth={1} />
-        <text x={cx + r + 4} y={cy + 4} fill={C.TXT} fontSize={11} fontFamily="Familjen Grotesk, sans-serif">
+        <text x={cx + r + 4} y={cy + 4} fill={C.TXT} fontSize={11} fontFamily={FONT_BODY}>
           {lastName(payload.name)}
         </text>
       </g>
@@ -450,16 +455,16 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
   };
 
   // One dot per team in the shooting-profile-vs-winning scatter; the selected
-  // team is larger and orange, the rest muted blue, each labelled by abbr.
+  // team is larger and plum, the rest muted blue, each labelled by abbr.
   const renderWinDot = (props) => {
     const { cx, cy, payload } = props;
     if (cx == null || cy == null) return null;
     const sel = payload.isSelected;
-    const fill = sel ? C.ORANGE : C.BLUE_HI;
+    const fill = sel ? C.BRAND : C.ACCENT;
     return (
       <g>
         <circle cx={cx} cy={cy} r={sel ? 7 : 5} fill={fill} fillOpacity={sel ? 1 : 0.55} stroke={fill} strokeWidth={sel ? 2 : 1} />
-        <text x={cx + (sel ? 10 : 8)} y={cy + 4} fill={sel ? C.ORANGE : C.MUTE} fontSize={11} fontWeight={sel ? 800 : 600} fontFamily="Archivo, sans-serif">
+        <text x={cx + (sel ? 10 : 8)} y={cy + 4} fill={sel ? C.BRAND : C.MUTE} fontSize={11} fontWeight={sel ? 700 : 600} fontFamily={FONT_DISPLAY}>
           {payload.abbr}
         </text>
       </g>
@@ -467,10 +472,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
   };
 
   return (
-    <main style={{ padding: "24px 28px 40px", maxWidth: 1180, margin: "0 auto" }}>
+    <main className="hf-container" style={{ paddingTop: 24, paddingBottom: 40 }}>
       {/* Headline tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
-        <BigTile label="Record" value={`${team.wins}–${team.losses}`} sub={`${team.winPct}% win rate`} accent={C.ORANGE} />
+        <BigTile label="Record" value={`${team.wins}–${team.losses}`} sub={`${team.winPct}% win rate`} accent={C.BRAND} />
         <BigTile label="Points / game" value={team.ppg} sub={`${team.oppg} allowed`} />
         <BigTile label="Avg margin" value={`${team.margin > 0 ? "+" : ""}${team.margin}`} sub="per game" accent={team.margin >= 0 ? C.GOOD : C.BAD} />
         <BigTile label="Home" value={team.homeRec} />
@@ -499,7 +504,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Points for vs against */}
       <Section
         title="Points scored vs allowed"
-        hint={<span><span style={{ color: C.ORANGE }}>● scored</span>{"  "}<span style={{ color: C.BLUE_HI }}>● allowed</span></span>}
+        hint={<span><span style={{ color: C.BRAND }}>● scored</span>{"  "}<span style={{ color: C.ACCENT }}>● allowed</span></span>}
       >
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -508,19 +513,19 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
             <Tooltip
               contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
-              labelStyle={{ color: C.ORANGE }}
+              labelStyle={{ color: C.BRAND }}
               labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)}
               formatter={(v, key) => [v, key === "for" ? "Scored" : "Allowed"]}
             />
-            <ReferenceLine y={team.ppg} stroke={C.ORANGE} strokeDasharray="5 4" strokeOpacity={0.5} />
-            <Line type="monotone" dataKey="for" stroke={C.ORANGE} strokeWidth={2.5} dot={{ r: 3, fill: C.ORANGE }} activeDot={{ r: 5 }} />
-            <Line type="monotone" dataKey="against" stroke={C.BLUE_HI} strokeWidth={2.5} dot={{ r: 3, fill: C.BLUE_HI }} activeDot={{ r: 5 }} />
+            <ReferenceLine y={team.ppg} stroke={C.BRAND} strokeDasharray="5 4" strokeOpacity={0.5} />
+            <Line type="monotone" dataKey="for" stroke={C.BRAND} strokeWidth={2.5} dot={{ r: 3, fill: C.BRAND }} activeDot={{ r: 5 }} />
+            <Line type="monotone" dataKey="against" stroke={C.ACCENT} strokeWidth={2.5} dot={{ r: 3, fill: C.ACCENT }} activeDot={{ r: 5 }} />
           </LineChart>
         </ResponsiveContainer>
       </Section>
 
       {/* Leaders */}
-      <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 12px" }}>Team leaders</h3>
+      <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: "0 0 12px" }}>Team leaders</h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
         <LeaderCard label="Scoring" leader={leaders.ppg} statKey="ppg" unit="ppg" />
         <LeaderCard label="Rebounding" leader={leaders.rpg} statKey="rpg" unit="rpg" />
@@ -529,15 +534,15 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         <LeaderCard label="Blocks" leader={leaders.bpg} statKey="bpg" unit="bpg" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 360px) 1fr", gap: 18, marginBottom: 22 }}>
+      <div className="split-2" style={{ display: "grid", gridTemplateColumns: "minmax(260px, 360px) 1fr", gap: 18, marginBottom: 22 }}>
         {/* Team shooting splits */}
         <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
-          <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 16px" }}>Team shooting</h3>
-          <SplitBar label="Field goal %" value={shooting.fgPct} color={C.BLUE_HI} />
-          <SplitBar label="3-point %" value={shooting.tpPct} color={C.ORANGE} />
-          <SplitBar label="Free throw %" value={shooting.ftPct} color={C.BLUE_HI} />
-          <SplitBar label="Effective FG %" value={shooting.efg} max={120} color={C.ORANGE} />
-          <SplitBar label="True shooting %" value={shooting.ts} max={120} color={C.BLUE_HI} />
+          <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: "0 0 16px" }}>Team shooting</h2>
+          <SplitBar label="Field goal %" value={shooting.fgPct} color={C.ACCENT} />
+          <SplitBar label="3-point %" value={shooting.tpPct} color={C.BRAND} />
+          <SplitBar label="Free throw %" value={shooting.ftPct} color={C.ACCENT} />
+          <SplitBar label="Effective FG %" value={shooting.efg} max={120} color={C.BRAND} />
+          <SplitBar label="True shooting %" value={shooting.ts} max={120} color={C.ACCENT} />
           <div style={{ display: "flex", gap: 10, marginTop: 14, fontSize: 11, color: C.MUTE, flexWrap: "wrap" }}>
             <span>FG {shooting.fgm}/{shooting.fga}</span><span>·</span>
             <span>3P {shooting.tpm}/{shooting.tpa}</span><span>·</span>
@@ -548,19 +553,19 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         {/* Scoring share */}
         <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: 0 }}>Scoring share</h3>
+            <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>Scoring share</h2>
             <span style={{ fontSize: 11, color: C.MUTE }}>% of team points</span>
           </div>
           {share.map((p) => (
             <div key={p.name} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ fontSize: 13, color: C.TXT, fontWeight: 600 }}>{lastName(p.name)}</span>
-                <span style={{ fontSize: 12, color: C.MUTE, fontFamily: "Archivo, sans-serif" }}>
+                <span style={{ fontSize: 12, color: C.MUTE, fontFamily: FONT_DISPLAY }}>
                   {p.share}% <span style={{ opacity: 0.6 }}>· {p.totalPts} pts</span>
                 </span>
               </div>
               <div style={{ height: 8, background: C.PANEL_2, borderRadius: 6, overflow: "hidden" }}>
-                <div style={{ width: `${(p.share / maxShare) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${C.BLUE_HI}, ${C.ORANGE})`, borderRadius: 6, transition: "width .6s ease" }} />
+                <div style={{ width: `${(p.share / maxShare) * 100}%`, height: "100%", background: `linear-gradient(90deg, ${C.ACCENT}, ${C.BRAND})`, borderRadius: 6, transition: "width .6s ease" }} />
               </div>
             </div>
           ))}
@@ -572,7 +577,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         {shotZones ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
             <CourtChart zones={shotZones} league={leagueShotZones} />
-            <div style={{ overflowX: "auto" }}>
+            <div className="scroll-x" style={{ overflowX: "auto" }}>
               <ZoneTable zones={shotZones} league={leagueShotZones} />
               <p style={{ fontSize: 12, color: C.MUTE, margin: "10px 2px 0", lineHeight: 1.5 }}>
                 Season FG% by court zone. <strong style={{ color: C.TXT }}>FG% vs lg</strong> is the efficiency gap from the
@@ -587,13 +592,13 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* League ranking — selected team vs all WNBA teams */}
-      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · orange = ${teamName}`}>
+      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · plum = ${teamName}`}>
         {ranking ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginBottom: 16 }}>
               <BigTile label="Net rating" value={ranking.selected ? `${ranking.selected.net > 0 ? "+" : ""}${ranking.selected.net}` : "—"} sub={`${ordinal(ranking.netRank)} of ${ranking.total}`} accent={ranking.selected && ranking.selected.net >= 0 ? C.GOOD : C.BAD} />
-              <BigTile label="Offense" value={ranking.selected ? ranking.selected.off : "—"} sub={`${ordinal(ranking.offRank)} of ${ranking.total}`} accent={C.ORANGE} />
-              <BigTile label="Defense" value={ranking.selected ? ranking.selected.def : "—"} sub={`${ordinal(ranking.defRank)} of ${ranking.total}`} accent={C.BLUE_HI} />
+              <BigTile label="Offense" value={ranking.selected ? ranking.selected.off : "—"} sub={`${ordinal(ranking.offRank)} of ${ranking.total}`} accent={C.BRAND} />
+              <BigTile label="Defense" value={ranking.selected ? ranking.selected.def : "—"} sub={`${ordinal(ranking.defRank)} of ${ranking.total}`} accent={C.ACCENT} />
               <BigTile label="Pace" value={ranking.selected ? ranking.selected.pace : "—"} sub={`${ordinal(ranking.paceRank)}-fastest of ${ranking.total}`} />
             </div>
             <ResponsiveContainer width="100%" height={ranking.chart.length * 28 + 40}>
@@ -605,7 +610,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <ReferenceLine x={0} stroke={C.MUTE} strokeOpacity={0.6} />
                 <Bar dataKey="net" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                   {ranking.chart.map((t, i) => (
-                    <Cell key={i} fill={t.isSelected ? C.ORANGE : C.BLUE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
+                    <Cell key={i} fill={t.isSelected ? C.BRAND : C.ACCENT} fillOpacity={t.isSelected ? 1 : 0.5} />
                   ))}
                 </Bar>
               </BarChart>
@@ -619,7 +624,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Shooting & possession profile vs the WNBA */}
       <Section
         title={`${teamName} profile · vs the WNBA`}
-        hint={`per 100 possessions · orange = ${teamName}`}
+        hint={`per 100 possessions · plum = ${teamName}`}
       >
         {profile ? (
           <>
@@ -632,7 +637,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
               <div>
-                <span style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 26, color: C.ORANGE }}>
+                <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 26, color: C.BRAND }}>
                   {profile.selVal != null ? profile.selVal : "—"}{activeMetric.pct ? "%" : ""}
                 </span>
                 <span style={{ color: C.MUTE, fontSize: 13, marginLeft: 8 }}>
@@ -647,10 +652,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <XAxis type="number" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <YAxis type="category" dataKey="abbr" width={46} tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} interval={0} />
                 <Tooltip content={<ProfileTooltip metric={activeMetric} />} cursor={{ fill: C.HOVER_FILL }} />
-                <ReferenceLine x={profile.avg} stroke={C.ORANGE} strokeDasharray="5 4" strokeOpacity={0.5} />
+                <ReferenceLine x={profile.avg} stroke={C.BRAND} strokeDasharray="5 4" strokeOpacity={0.5} />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={false}>
                   {profile.chart.map((t, i) => (
-                    <Cell key={i} fill={t.isSelected ? C.ORANGE : C.BLUE_HI} fillOpacity={t.isSelected ? 1 : 0.5} />
+                    <Cell key={i} fill={t.isSelected ? C.BRAND : C.ACCENT} fillOpacity={t.isSelected ? 1 : 0.5} />
                   ))}
                 </Bar>
               </BarChart>
@@ -668,7 +673,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Four factors */}
       <Section
         title={`Four factors · ${teamName} vs opponents`}
-        hint={<span><span style={{ color: C.ORANGE }}>● {teamName}</span>{"  "}<span style={{ color: C.BLUE_HI }}>● opponents</span></span>}
+        hint={<span><span style={{ color: C.BRAND }}>● {teamName}</span>{"  "}<span style={{ color: C.ACCENT }}>● opponents</span></span>}
       >
         {ffData ? (
           <>
@@ -678,8 +683,8 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <XAxis dataKey="factor" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
                 <Tooltip content={<FactorTooltip />} cursor={{ fill: C.HOVER_FILL }} />
-                <Bar dataKey="team" fill={C.ORANGE} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="opp" fill={C.BLUE_HI} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="team" fill={C.BRAND} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="opp" fill={C.ACCENT} radius={[4, 4, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
             <p style={{ fontSize: 12, color: C.MUTE, margin: "8px 2px 0", lineHeight: 1.5 }}>
@@ -711,7 +716,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <Scatter data={advScatter} shape={renderAdvDot} isAnimationActive={false} />
               </ScatterChart>
             </ResponsiveContainer>
-            <div style={{ overflowX: "auto", marginTop: 8 }}>
+            <div className="scroll-x" style={{ overflowX: "auto", marginTop: 8 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
                 <thead>
                   <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -731,7 +736,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                       <td style={{ padding: "9px 10px", textAlign: "right" }}>{p.astPct}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right" }}>{p.rebPct}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: p.net >= 0 ? C.GOOD : C.LOSS_FG }}>{p.net > 0 ? "+" : ""}{p.net}</td>
-                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700, color: C.ORANGE }}>{p.pie}</td>
+                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.BRAND }}>{p.pie}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -749,13 +754,13 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           lineups.map((l, i) => {
             const w = Math.min(50, (Math.abs(l.net) / maxAbsNet) * 50);
             return (
-              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "26px 1fr 70px 130px", gap: 12, alignItems: "center", padding: "11px 0", borderBottom: i < lineups.length - 1 ? `1px solid ${C.LINE}55` : "none" }}>
-                <span style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.MUTE, fontSize: 13 }}>{i + 1}</span>
+              <div key={l.id} className="lineup-row" style={{ display: "grid", gridTemplateColumns: "26px 1fr 70px 130px", gap: 12, alignItems: "center", padding: "11px 0", borderBottom: i < lineups.length - 1 ? `1px solid ${C.LINE}55` : "none" }}>
+                <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.MUTE, fontSize: 13 }}>{i + 1}</span>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.name}</div>
                   <div style={{ fontSize: 11, color: C.MUTE }}>{l.min} min · {l.gp} GP · OFF {l.off} / DEF {l.def}</div>
                 </div>
-                <div style={{ textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 18, color: l.net >= 0 ? C.GOOD : C.BAD }}>
+                <div style={{ textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18, color: l.net >= 0 ? C.GOOD : C.BAD }}>
                   {l.net > 0 ? "+" : ""}{l.net}
                 </div>
                 <div style={{ position: "relative", height: 8, background: C.PANEL_2, borderRadius: 6 }}>
@@ -774,7 +779,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {(upcoming.length > 0 || errors.schedule) && (
         <Section title="Upcoming games">
           {upcoming.length > 0 ? (
-            <div style={{ overflowX: "auto" }}>
+            <div className="scroll-x" style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 460 }}>
                 <thead>
                   <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -792,7 +797,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                         <span style={{ marginRight: 5 }}>{g.oppEmoji}</span>
                         <span style={{ fontWeight: 700 }}>{g.opp}</span>
                       </td>
-                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700 }}>{g.oppW}-{g.oppL}</td>
+                      <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700 }}>{g.oppW}-{g.oppL}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: g.oppNet == null ? C.MUTE : g.oppNet >= 0 ? C.GOOD : C.LOSS_FG }}>
                         {g.oppNet == null ? "—" : `${g.oppNet > 0 ? "+" : ""}${g.oppNet.toFixed(1)}`}
                       </td>
@@ -809,7 +814,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
       {/* Results table */}
       <Section title="Results">
-        <div style={{ overflowX: "auto" }}>
+        <div className="scroll-x" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
             <thead>
               <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -828,10 +833,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                       <span style={{ color: C.MUTE }}>{g.home ? "vs" : "@"}</span> <span style={{ fontWeight: 700 }}>{g.opp}</span>
                     </td>
                     <td style={{ padding: "9px 10px", textAlign: "right" }}>
-                      <span style={{ fontWeight: 800, fontSize: 12, padding: "2px 8px", borderRadius: 6,
+                      <span style={{ fontWeight: 700, fontSize: 12, padding: "2px 8px", borderRadius: 6,
                         background: g.w ? C.WIN_BG : C.LOSS_BG, color: g.w ? C.GOOD : C.LOSS_FG }}>{g.w ? "W" : "L"}</span>
                     </td>
-                    <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "Archivo, sans-serif", fontWeight: 700 }}>{g.tm}-{g.op}</td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700 }}>{g.tm}-{g.op}</td>
                     <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, color: margin >= 0 ? C.GOOD : C.LOSS_FG }}>{margin > 0 ? "+" : ""}{margin}</td>
                   </tr>
                 );
@@ -844,7 +849,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {/* Shooting profile vs winning — league-wide scatter */}
       <Section
         title="Shooting profile vs winning"
-        hint={`each dot = a team · orange = ${teamName}`}
+        hint={`each dot = a team · plum = ${teamName}`}
       >
         {winScatter.pts.length ? (
           <>
@@ -887,7 +892,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 />
                 <ZAxis range={[60, 60]} />
                 {winScatter.seg && (
-                  <ReferenceLine segment={winScatter.seg} stroke={C.ORANGE} strokeDasharray="6 4" strokeOpacity={0.65} ifOverflow="extendDomain" />
+                  <ReferenceLine segment={winScatter.seg} stroke={C.BRAND} strokeDasharray="6 4" strokeOpacity={0.65} ifOverflow="extendDomain" />
                 )}
                 <Tooltip
                   cursor={{ strokeDasharray: "3 3", stroke: C.LINE }}
@@ -896,7 +901,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                     const d = payload[0].payload;
                     return (
                       <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 160 }}>
-                        <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: d.isSelected ? C.ORANGE : C.TXT, marginBottom: 6 }}>{d.abbr}</div>
+                        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: d.isSelected ? C.BRAND : C.TXT, marginBottom: 6 }}>{d.abbr}</div>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
                           <span style={{ color: C.MUTE }}>Win %</span><span style={{ color: C.TXT, fontWeight: 700 }}>{d.y}%</span>
                         </div>

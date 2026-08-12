@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { C } from "./palette";
+import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer,
@@ -35,7 +35,7 @@ function CustomTooltip({ active, payload }) {
   );
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, padding: "10px 12px", fontSize: 12, minWidth: 200 }}>
-      <div style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, color: C.ORANGE, marginBottom: 6 }}>{d.name}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, color: C.BRAND, marginBottom: 6 }}>{d.name}</div>
       {row("Offense on/off", `${d.offDiff > 0 ? "+" : ""}${d.offDiff} / 100`, d.offDiff >= 0 ? C.GOOD : C.BAD)}
       {row("Defense on/off", `${d.defDiff > 0 ? "+" : ""}${d.defDiff} / 100`, d.defDiff <= 0 ? C.GOOD : C.BAD)}
       {row("Net impact", `${d.netDiff > 0 ? "+" : ""}${d.netDiff} / 100`, d.netDiff >= 0 ? C.GOOD : C.BAD)}
@@ -59,7 +59,7 @@ export default function OnOffChart({ onOff, selectedName }) {
   if (!data.length) {
     return (
       <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
-        <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: "0 0 6px" }}>On/off impact</h3>
+        <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: "0 0 6px" }}>On/off impact</h2>
         <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>
           On/off ratings weren't returned (the advanced endpoint may be unavailable from this host).
         </p>
@@ -79,9 +79,9 @@ export default function OnOffChart({ onOff, selectedName }) {
     return (
       <g>
         <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={selected ? 0.95 : 0.55}
-          stroke={selected ? C.ORANGE : fill} strokeWidth={selected ? 2.5 : 1} />
-        <text x={cx + r + 4} y={cy + 4} fill={selected ? C.ORANGE : C.TXT} fontSize={11}
-          fontWeight={selected ? 800 : 500} fontFamily="Familjen Grotesk, sans-serif">
+          stroke={selected ? C.BRAND : fill} strokeWidth={selected ? 2.5 : 1} />
+        <text x={cx + r + 4} y={cy + 4} fill={selected ? C.BRAND : C.TXT} fontSize={11}
+          fontWeight={selected ? 700 : 500} fontFamily={FONT_BODY}>
           {lastName(payload.name)}
         </text>
       </g>
@@ -91,7 +91,7 @@ export default function OnOffChart({ onOff, selectedName }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
-        <h3 style={{ fontFamily: "Archivo", fontWeight: 800, fontSize: 15, margin: 0 }}>On/off impact · per 100 possessions</h3>
+        <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>On/off impact · per 100 possessions</h2>
         <span style={{ fontSize: 11, color: C.MUTE }}>dot size = minutes · top-right = helps both ends</span>
       </div>
       <p style={{ fontSize: 12, color: C.MUTE, margin: "0 0 6px", lineHeight: 1.5 }}>
@@ -115,8 +115,8 @@ export default function OnOffChart({ onOff, selectedName }) {
             <YAxis type="number" dataKey="y" domain={yDom} reversed tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE}
               label={{ value: "Defensive on/off  (↑ = fewer opp pts per 100)", angle: -90, position: "insideLeft", fill: C.MUTE, fontSize: 12, style: { textAnchor: "middle" } }} />
             <ZAxis type="number" dataKey="z" range={[60, 60]} />
-            <ReferenceLine x={0} stroke={C.ORANGE} strokeOpacity={0.5} strokeDasharray="5 4" />
-            <ReferenceLine y={0} stroke={C.ORANGE} strokeOpacity={0.5} strokeDasharray="5 4" />
+            <ReferenceLine x={0} stroke={C.BRAND} strokeOpacity={0.5} strokeDasharray="5 4" />
+            <ReferenceLine y={0} stroke={C.BRAND} strokeOpacity={0.5} strokeDasharray="5 4" />
             <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3", stroke: C.LINE }} />
             <Scatter data={data} shape={renderDot} isAnimationActive={false} />
           </ScatterChart>
