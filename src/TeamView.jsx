@@ -106,15 +106,42 @@ function LeaderCard({ label, leader, statKey, unit }) {
   );
 }
 
-function Section({ title, hint, children, style }) {
+function Section({ title, hint, stale, children, style }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22, ...style }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>{title}</h2>
         {hint && <span style={{ fontSize: 11, color: C.MUTE }}>{hint}</span>}
       </div>
+      <StaleNote stale={stale} />
       {children}
     </section>
+  );
+}
+
+// Shown above a section whose numbers came from an earlier snapshot because
+// stats.wnba.com didn't return them on the last refresh. The chart still
+// renders — it just says how old it is.
+export function StaleNote({ stale }) {
+  if (!stale || !stale.at) return null;
+  const when = new Date(stale.at);
+  const date = Number.isNaN(when.getTime())
+    ? null
+    : when.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return (
+    <p
+      title={stale.reason || undefined}
+      style={{
+        display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
+        fontSize: 11.5, color: C.MUTE, margin: "0 0 12px", lineHeight: 1.5,
+      }}
+    >
+      <span style={{ color: C.BRAND, fontWeight: 700 }}>↺</span>
+      <span>
+        Last refresh didn't return this — showing the numbers from
+        {date ? <strong style={{ color: C.TXT, fontWeight: 700 }}> {date}</strong> : " the previous update"}.
+      </span>
+    </p>
   );
 }
 
@@ -280,7 +307,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [] }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [] }) {
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -573,7 +600,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </div>
 
       {/* Shooting by zone — court map + numbers */}
-      <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume">
+      <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume" stale={stale.shotZones}>
         {shotZones ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
             <CourtChart zones={shotZones} league={leagueShotZones} />
@@ -592,7 +619,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* League ranking — selected team vs all WNBA teams */}
-      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · plum = ${teamName}`}>
+      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · plum = ${teamName}`} stale={stale.teamRanks}>
         {ranking ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginBottom: 16 }}>
@@ -625,6 +652,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       <Section
         title={`${teamName} profile · vs the WNBA`}
         hint={`per 100 possessions · plum = ${teamName}`}
+        stale={stale.teamProfiles}
       >
         {profile ? (
           <>
@@ -674,6 +702,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       <Section
         title={`Four factors · ${teamName} vs opponents`}
         hint={<span><span style={{ color: C.BRAND }}>● {teamName}</span>{"  "}<span style={{ color: C.ACCENT }}>● opponents</span></span>}
+        stale={stale.fourFactors}
       >
         {ffData ? (
           <>
@@ -698,10 +727,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* On/off impact (moved from the player view) */}
-      <OnOffChart onOff={onOff} />
+      <OnOffChart onOff={onOff} stale={stale.onOff} />
 
       {/* Advanced player stats */}
-      <Section title="Advanced player profile · usage vs efficiency" hint="dot size = minutes · color = net rating">
+      <Section title="Advanced player profile · usage vs efficiency" hint="dot size = minutes · color = net rating" stale={stale.playerAdv}>
         {advScatter.length ? (
           <>
             <ResponsiveContainer width="100%" height={340}>
@@ -749,7 +778,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* Lineups */}
-      <Section title="Most-used lineups" hint="top 8 by minutes · net = points per 100 possessions">
+      <Section title="Most-used lineups" hint="top 8 by minutes · net = points per 100 possessions" stale={stale.lineups}>
         {lineups && lineups.length ? (
           lineups.map((l, i) => {
             const w = Math.min(50, (Math.abs(l.net) / maxAbsNet) * 50);
@@ -777,7 +806,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
       {/* Upcoming games */}
       {(upcoming.length > 0 || errors.schedule) && (
-        <Section title="Upcoming games">
+        <Section title="Upcoming games" stale={stale.upcoming}>
           {upcoming.length > 0 ? (
             <div className="scroll-x" style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 460 }}>

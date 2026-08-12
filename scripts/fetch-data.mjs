@@ -375,6 +375,16 @@ function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt } = 
 async function main() {
   console.log(`\nWNBA Analytics — fetching ${SEASON} data from stats.wnba.com\n`);
 
+  // Anything that fails below falls back on this (see "previous-snapshot
+  // fallback"), so a bad night degrades to older numbers instead of blank charts.
+  const prev = await readPreviousSnapshot(OUT_PATH);
+  const prevAt = prev ? prev.meta.generatedAt : null;
+  console.log(
+    prev
+      ? `Previous snapshot: ${prevAt} — will back-fill anything that fails today.\n`
+      : "No usable previous snapshot — nothing to fall back on if a request fails.\n"
+  );
+
   // ----- league-wide data (one call each) -----
   console.log("League-wide data:");
   process.stdout.write("  • team game log … ");
@@ -383,9 +393,20 @@ async function main() {
   console.log(`${teamRows.length} rows`);
   await sleep(DELAY_BETWEEN_CALLS_MS);
 
+  // The player game log is the source of every box score (rosters, four
+  // factors, team profiles). It used to be fatal; now it degrades to the
+  // previous snapshot's rosters so the Players tab doesn't empty out.
   process.stdout.write("  • player game log … ");
-  const playerRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON, PlayerOrTeam: "P" }), "LeagueGameLog");
-  console.log(`${playerRows.length} rows`);
+  let playerRows = [];
+  let playerLogErr = null;
+  try {
+    playerRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON, PlayerOrTeam: "P" }), "LeagueGameLog");
+    console.log(`${playerRows.length} rows`);
+    if (!playerRows.length) playerLogErr = "No player game-log rows returned.";
+  } catch (e) {
+    playerLogErr = e.message;
+    console.log(`FAILED — ${e.message}`);
+  }
   await sleep(DELAY_BETWEEN_CALLS_MS);
 
   // ----- three league-wide dashboards (advanced ratings, four factors, player advanced) -----
@@ -618,7 +639,9 @@ async function main() {
       if (agg) { agg.m += zn.m; agg.a += zn.a; }
     }
   }
-  const leagueShotZones = [...leagueZoneAgg.values()];
+  // Left empty (rather than a row of zeroes) when the request failed, so the
+  // fallback below can tell "no data" apart from "genuinely zero attempts".
+  const leagueShotZones = teamZoneRows.length ? [...leagueZoneAgg.values()] : [];
 
   // League-wide win% + zone shooting per team, for the "shooting profile vs
   // winning" scatter on the Team tab (does shot selection track with winning?).
@@ -705,17 +728,37 @@ async function main() {
 
     teams.push({ id: teamId, name: fullName, city, teamName, abbr, emoji });
     const upcoming = upcomingByTeam.get(teamId) || [];
-    data[teamId] = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, upcoming, errors };
+    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, upcoming, errors };
+
+    // Back-fill this team's empty datasets from the last snapshot.
+    const prevBundle = prev ? prev.data[teamId] : null;
+    // A player's game logs index into `games` by position, so those two are only
+    // meaningful as a pair: when the roster has to come from the previous
+    // snapshot, its games must too, or every log would point at the wrong game.
+    if (prevBundle && isEmpty(bundle.roster) && !isEmpty(prevBundle.roster)) bundle.games = [];
+    const fallbackKeys = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
+    // An empty schedule is legitimate once a season ends, so only reuse the old
+    // one when the schedule request actually failed.
+    if (scheduleErr) fallbackKeys.push("upcoming");
+    const stale = carryOver(bundle, prevBundle, fallbackKeys, {
+      prevAt,
+      prevStale: (prevBundle && prevBundle.stale) || {},
+      errors: { ...errors, games: playerLogErr, roster: playerLogErr, upcoming: scheduleErr },
+    });
+    if (Object.keys(stale).length) bundle.stale = stale;
+    data[teamId] = bundle;
 
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+    const carried = Object.keys(stale);
     const flags = [
-      plural(games.length, "game"),
-      plural(roster.length, "player"),
-      `${upcoming.length} upcoming`,
-      errors.onOff ? "on/off ✗" : "on/off ✓",
-      errors.lineups ? "lineups ✗" : "lineups ✓",
-    ].join(" · ");
-    console.log(flags);
+      plural(bundle.games.length, "game"),
+      plural(bundle.roster.length, "player"),
+      `${bundle.upcoming.length} upcoming`,
+      errors.onOff && !stale.onOff ? "on/off ✗" : "on/off ✓",
+      errors.lineups && !stale.lineups ? "lineups ✗" : "lineups ✓",
+    ];
+    if (carried.length) flags.push(`↺ kept ${carried.join(", ")}`);
+    console.log(flags.join(" · "));
   }
 
   teams.sort((a, b) => a.name.localeCompare(b.name));
@@ -737,16 +780,29 @@ async function main() {
       if (agg) { agg.m += zn.m; agg.a += zn.a; }
     }
   }
-  const positionShotZones = { G: [...posAgg.G.values()], F: [...posAgg.F.values()] };
+  const positionShotZones = playerZoneRows.length
+    ? { G: [...posAgg.G.values()], F: [...posAgg.F.values()] }
+    : null; // null, not zeroes — see leagueShotZones above
+
+  // Back-fill the league-wide datasets (shared by every team's Team tab).
+  const league = { teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins };
+  const leagueStale = carryOver(league, prev, Object.keys(league), {
+    prevAt,
+    prevStale: (prev && prev.stale) || {},
+    errors: {
+      teamRanks: errLeague.ratings,
+      teamProfiles: playerLogErr,
+      leagueShotZones: errLeague.teamShotZones,
+      positionShotZones: errLeague.playerShotZones,
+      teamZoneWins: errLeague.teamShotZones,
+    },
+  });
 
   const payload = {
     meta: { generatedAt: new Date().toISOString(), season: SEASON },
     teams,
-    teamRanks,
-    teamProfiles,
-    leagueShotZones,
-    positionShotZones,
-    teamZoneWins,
+    ...league,
+    stale: leagueStale,
     data,
   };
 
@@ -757,12 +813,22 @@ async function main() {
   console.log(`  ${teams.length} teams`);
   const leagueFails = Object.keys(errLeague);
   if (leagueFails.length) {
-    console.log(`  league-wide datasets unavailable: ${leagueFails.join(", ")} (affects every team's Team tab)`);
+    console.log(`  league-wide requests that failed: ${leagueFails.join(", ")}`);
+  }
+  const leagueCarried = Object.keys(leagueStale);
+  const teamsCarried = Object.values(data).filter((b) => b.stale).length;
+  if (leagueCarried.length || teamsCarried) {
+    console.log(
+      `  kept from ${prevAt}: ${leagueCarried.length ? leagueCarried.join(", ") : "no league-wide sets"}` +
+        `${teamsCarried ? ` · per-team sets for ${teamsCarried} of ${teams.length} teams` : ""}`
+    );
+    console.log(`  (those sections stay on the page, labelled with the date they came from)`);
   }
   console.log("");
 }
 
 main().catch((e) => {
-  console.error(`\nFatal: ${e.message}\n`);
+  console.error(`\nFatal: ${e.message}`);
+  console.error(`Nothing was written — the existing snapshot at ${OUT_PATH} is untouched, so the site keeps serving it.\n`);
   process.exit(1);
 });
