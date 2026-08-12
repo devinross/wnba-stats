@@ -76,11 +76,39 @@ Wrote .../public/data/wnba.json
   13 teams
 ```
 
-If a per-team optional request (on/off or lineups) fails, that shows as `✗` and
-that one section shows an "unavailable" note for that team — everything else
-still works. If a **league-wide** request fails (ratings / four factors / player
-advanced), that dataset is missing for every team. If the **core** game log
-fails, the script stops and prints why.
+If something fails, the script falls back on the numbers already in
+`wnba.json` rather than writing a hole — see **When a request fails** below.
+A line ending in `↺ kept onOff, lineups` means those two sections for that team
+came from the previous snapshot.
+
+### When a request fails
+
+stats.wnba.com is flaky — an endpoint that answered yesterday can return a 500
+today. That used to punch a hole in the snapshot, and a chart that had been on
+the page for weeks would disappear until the next good fetch.
+
+Instead, **every dataset that fails or comes back empty is carried over from the
+last `wnba.json`**, tagged with the date it was really fetched. The section keeps
+rendering, with a note above it:
+
+> ↺ The last refresh didn't return this — showing the numbers from Aug 11.
+
+(Hovering the note shows the underlying error.) The rules:
+
+- **Carried per dataset**, so one broken endpoint never affects the rest. On/off
+  and lineups are per team; ratings, shot zones and league profiles are shared.
+- **Games and rosters carry as a pair**, since each player's game logs index into
+  that team's game list.
+- **The date isn't restamped.** If a section has been failing for a week, it says
+  a week ago — not yesterday.
+- **Nothing older than 21 days is reused** (`MAX_STALE_DAYS` in
+  `scripts/fetch-data.mjs`). Past that the section goes back to showing
+  "unavailable" rather than passing off three-week-old numbers as current.
+- **A different season never back-fills another.** Change `SEASON` and the old
+  snapshot is ignored.
+- **If the core team game log fails, nothing is written at all** — the script
+  exits non-zero and leaves the existing `wnba.json` in place, so the site keeps
+  serving the last good snapshot.
 
 ## 3. Preview locally
 
@@ -238,7 +266,8 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 |---|---|
 | Site says "Couldn't load data/wnba.json" | You haven't fetched yet, or didn't upload `data/wnba.json`. Run `npm run fetch`, rebuild, and make sure `data/wnba.json` is next to `index.html`. |
 | `npm run fetch` stops at the team game log | stats.wnba.com refused the core request from your network. Try again; if it persists, your IP may be temporarily blocked - try a different network. |
-| A Team-tab section shows "unavailable" | That optional endpoint failed when you fetched. The red text under it shows the exact reason. Re-run `npm run fetch`. |
+| A section says "showing the numbers from …" | That endpoint failed on the last fetch, so those numbers came from the previous snapshot. Hover the note for the reason; re-run `npm run fetch` to try again. |
+| A Team-tab section shows "unavailable" | That endpoint failed **and** there was nothing recent enough to fall back on (no earlier snapshot, or it's over 21 days old). The red text under it shows the exact reason. Re-run `npm run fetch`. |
 | "No games found" | The fetched season has no completed games, or `SEASON` in `scripts/fetch-data.mjs` is wrong. Fix and re-run `npm run fetch`. |
 | Blank page / asset errors on a subfolder deploy | Make sure you uploaded the whole contents of `dist/` (including `assets/` and `data/`) into the subfolder. |
 
@@ -286,7 +315,8 @@ index.html              app entry
 vite.config.js          dev server + build config (no proxy needed anymore)
 scripts/
   fetch-data.mjs        downloads ALL teams from stats.wnba.com -> public/data/wnba.json
-                        (SEASON and the TEAM_EMOJI map live at the top of this file)
+                        (SEASON and the TEAM_EMOJI map live at the top of this file;
+                         anything that fails is carried over from the previous file)
 public/
   data/wnba.json        the saved snapshot for every team (created by `npm run fetch`)
 src/
@@ -300,6 +330,7 @@ src/
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
+  StaleNote.jsx         the "showing the numbers from ..." note on carried-over sections
   index.css             brand tokens, typography, shared .hf-* classes
 server/
   wnba.php              NOT USED anymore - the old live proxy; safe to delete
