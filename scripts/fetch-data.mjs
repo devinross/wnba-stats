@@ -14,7 +14,7 @@
 // many shared hosts are not). It prints the real status of every request.
 // ---------------------------------------------------------------------------
 
-import { writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,11 @@ const SEASON = 2026; // WNBA season (single calendar year). Change + re-run to s
 const HOST = "https://stats.wnba.com";
 const REQUEST_TIMEOUT_MS = 30000;
 const DELAY_BETWEEN_CALLS_MS = 500; // be gentle with the undocumented endpoint
+
+// How long a carried-over dataset may keep standing in for a live one (see the
+// "previous-snapshot fallback" section below). Past this, we'd rather show the
+// section as unavailable than pass off three-week-old ratings as current.
+const MAX_STALE_DAYS = 21;
 
 const HEADERS = {
   "User-Agent":
@@ -314,6 +319,55 @@ function shapeLineups(rows) {
     id: r.GROUP_ID, name: cleanLineup(r.GROUP_NAME), gp: n(r.GP), min: r1(r.MIN),
     off: r1(r.OFF_RATING), def: r1(r.DEF_RATING), net: r1(r.NET_RATING),
   })).sort((a, b) => b.min - a.min).slice(0, 8);
+}
+
+// ----- previous-snapshot fallback --------------------------------------------
+// stats.wnba.com is flaky: an endpoint that answered yesterday can return a 500
+// today, and a chart that had been on the page for weeks would simply vanish
+// until the next good fetch. So instead of writing a hole into the snapshot,
+// every dataset that comes back empty or errored is back-filled from the file
+// we wrote last time and tagged with the date it was really fetched, which lets
+// the UI keep rendering the section with an "as of …" note.
+
+async function readPreviousSnapshot(path) {
+  let prev;
+  try {
+    prev = JSON.parse(await readFile(path, "utf8"));
+  } catch (_) {
+    return null; // first run, or the file is missing / unreadable / corrupt
+  }
+  if (!prev || !prev.meta || !prev.meta.generatedAt || !Array.isArray(prev.teams) || !prev.data) return null;
+  if (Number(prev.meta.season) !== SEASON) return null; // never back-fill across seasons
+  return prev;
+}
+
+// "Nothing usable came back": null/undefined, an empty array, or an empty object.
+function isEmpty(v) {
+  if (v == null) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v).length === 0;
+  return false;
+}
+
+// Back-fill each empty key on `fresh` from `prev`, mutating `fresh`. Returns
+// { key: { at, reason } } describing whatever was carried over, where `at` is
+// when that data was actually fetched — if the previous snapshot had itself
+// carried the key over, its original date is kept rather than restamped, so a
+// section that's been broken for a week reports a week-old date, and ages out
+// at MAX_STALE_DAYS instead of looking fresh forever.
+function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt } = {}) {
+  const stale = {};
+  if (!prev) return stale;
+  const oldest = Date.now() - MAX_STALE_DAYS * 86400000;
+  for (const key of keys) {
+    if (!isEmpty(fresh[key]) || isEmpty(prev[key])) continue;
+    const at = (prevStale[key] && prevStale[key].at) || prevAt;
+    const ts = Date.parse(at);
+    if (!Number.isFinite(ts) || ts < oldest) continue;
+    fresh[key] = prev[key];
+    stale[key] = { at, reason: errors[key] || "the endpoint returned no rows this run" };
+  }
+  return stale;
 }
 
 // ----- main ------------------------------------------------------------------
