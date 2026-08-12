@@ -54,7 +54,7 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null, playerHref }) {
   const player = roster[sel] || roster[0];
   const agg = useMemo(() => aggregate(player), [sel, roster]);
 
@@ -84,7 +84,21 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
             const active = i === sel;
             const initials = p.name.split(" ").map((n) => n[0]).join("").slice(0, 2);
             return (
-              <button key={p.name + i} onClick={() => setSel(i)} style={{
+              // An <a> rather than a <button>: each player is a real page, so
+              // this needs to be crawlable, middle-clickable and copyable. The
+              // click handler still takes plain left-clicks so switching players
+              // stays instant, but anything else (new tab, new window) falls
+              // through to the browser.
+              <a
+                key={p.name + i}
+                href={playerHref ? playerHref(i) : undefined}
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                  e.preventDefault();
+                  setSel(i);
+                }}
+                aria-current={active ? "page" : undefined}
+                style={{
                 width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12,
                 padding: "10px", marginBottom: 4, borderRadius: 12, cursor: "pointer",
                 border: `1px solid ${active ? C.BRAND + "66" : "transparent"}`,
@@ -97,7 +111,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                   <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", color: C.TXT }}>{p.name}</div>
                   <div style={{ fontSize: 11, color: C.MUTE }}>{p.num ? `#${p.num} · ` : ""}{p.pos || "—"} · {p.logs.length} GP</div>
                 </div>
-              </button>
+              </a>
             );
           })}
         </aside>

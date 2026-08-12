@@ -37,9 +37,8 @@ export function pageMeta({ team, tab, player, season, path = "/" }) {
       canonical,
       title: `${player.name} ${yr}Stats & Game Log | ${team.teamName}`,
       description:
-        `${player.name} ${yr}stats for the ${team.name}: game log, points, rebounds and assists per game, ` +
-        `shooting splits, true shooting percentage and a shot-zone breakdown` +
-        `${role ? ` for the ${team.teamName} ${role}` : ""}.`,
+        `${player.name} ${yr}stats — ${team.name}${role ? ` ${role}` : ""}. Game log, points, rebounds ` +
+        `and assists per game, shooting splits and a shot-zone breakdown.`,
       ogTitle: `${player.name} — ${yr}${team.name} stats`,
     };
   }
@@ -49,8 +48,8 @@ export function pageMeta({ team, tab, player, season, path = "/" }) {
       canonical,
       title: `${team.name} ${yr}Stats — Shot Charts & Lineups`,
       description:
-        `${team.name} ${yr}team stats: shot-zone charts versus the WNBA average, four factors, ` +
-        `most-used lineups by net rating, on/off player impact, and where the ${team.teamName} rank across the league.`,
+        `${team.name} ${yr}team stats: shot-zone charts vs the WNBA average, four factors, ` +
+        `lineup net ratings, on/off impact and league-wide rankings.`,
       ogTitle: `${team.name} ${yr}stats`,
     };
   }

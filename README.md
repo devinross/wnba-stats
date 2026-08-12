@@ -132,10 +132,11 @@ step:
 npm run refresh
 ```
 
-`npm run build` runs `scripts/build-seo.mjs` after Vite. See
-[Search engines & sharing](#search-engines--sharing) for what that does and why
-it matters — the short version is that it puts real, crawlable content into
-`dist/index.html`, which would otherwise ship as an empty `<div id="root">`.
+`npm run build` runs `scripts/prerender.mjs` after Vite, which is why the build
+prints something like `prerender: 254 pages`. See
+[Search engines & sharing](#search-engines--sharing) — the short version is that
+it turns the one-page app into a real page per team and player, each with its
+own URL, title and crawlable content.
 
 ---
 
@@ -151,8 +152,20 @@ static, **you do not need PHP or the old proxy** — just upload the files.
 **Option B - SFTP / your editor's publish feature:** upload the **contents of
 `dist/`** into `public_html/`.
 
-Subfolder deploys (e.g. `public_html/sparks/`) work too — asset and data paths
-are relative, so just upload `dist/`'s contents into that subfolder.
+> **Subfolder deploys no longer work.** They used to: asset and data paths were
+> relative (`base: "./"`). The site now prerenders a page per team and player,
+> which are served from nested paths like `/team/atlanta-dream/`, and a relative
+> asset URL on one of those resolves to `/team/atlanta-dream/assets/…`. So
+> `vite.config.js` sets `base: "/"` and the build must be served from a domain
+> root — `wnba.highlightfactory.app`, or `public_html/` itself, but not
+> `public_html/wnba/`.
+
+Any host also needs to serve `dist/team/atlanta-dream/index.html` for the URL
+`/team/atlanta-dream`, which static hosts (Vercel, Netlify, Apache, nginx) do by
+default. Note that `vite preview` does **not** — it has a single-page-app
+fallback that answers every unknown path with the root `index.html`, so team and
+player URLs will all look like the landing page there. That's a quirk of the
+preview server, not the build.
 
 That's it. Load your domain and the dashboard appears.
 
@@ -182,19 +195,39 @@ shares that brand's design language, copied from the marketing site
 
 ## Search engines & sharing
 
-This is a client-rendered React app, which is the one thing search engines
-handle badly: without help, the deployed `dist/index.html` is literally
-`<div id="root"></div>`. Google will execute the JavaScript and eventually see
-the real page, but social scrapers, most AI crawlers, and Google's first pass
-won't. Three things address that:
+A client-rendered app is two things search engines handle badly: the deployed
+HTML is `<div id="root"></div>` with no content in it, and the whole site lives
+at one URL. A stats site's search demand is almost all long-tail ("atlanta dream
+stats", "a'ja wilson shot chart"), which one URL can never answer. So the build
+turns the app into ~254 real pages:
 
-- **`scripts/build-seo.mjs`** runs as part of `npm run build`. It injects a
-  static summary into `#root` (what the dashboard covers, plus the real team
-  list and season read from `public/data/wnba.json`) and a JSON-LD block
-  (`WebSite`, `Organization`, `Dataset`) into `<head>`. React replaces the
-  summary the instant it mounts, so nobody sees it for more than a frame — but
-  because both come from the same snapshot, the summary can't drift from the
-  app. The nightly refresh keeps `dateModified` and the season current for free.
+```
+/                                 league landing
+/team/atlanta-dream               a team
+/team/atlanta-dream/allisha-gray  a player
+```
+
+- **`src/routes.js`** owns the URL scheme — slugs, `buildPath`, `resolveRoute`,
+  `allRoutes`. It is imported by *both* the app and the build script, so the two
+  can't disagree about what a URL means. Player slugs are de-duplicated per
+  roster, so two similar names can't fight over one URL.
+- **`src/pageMeta.js`** owns the `<title>`, description and canonical for every
+  route, and is likewise shared: `scripts/prerender.mjs` writes them into the
+  static files, and `App.jsx` applies the same values during client-side
+  navigation, so the page a visitor sees always matches the one Google indexed.
+- **`scripts/prerender.mjs`** runs as part of `npm run build`. For each route it
+  writes `dist/<route>/index.html` containing that entity's real numbers (record,
+  per-game averages, leaders, roster — all read from `public/data/wnba.json`),
+  the right meta tags, and JSON-LD (`SportsTeam` / `Person` / `Dataset` plus
+  breadcrumbs). React replaces the static content on mount, so it's on screen
+  for a frame — but a crawler that doesn't run JavaScript still gets the
+  substance and, importantly, links to follow. It also writes `dist/sitemap.xml`
+  and fails the build if the page count and the sitemap ever disagree.
+- **Internal links.** The sitemap alone isn't enough — pages need to link to
+  each other. The team `<select>` isn't crawlable, so there's an "All teams" nav
+  above the footer, and the roster rail and the advanced-stats table use real
+  `<a href>`s (a plain left-click is still intercepted for instant navigation;
+  cmd-click opens a new tab like any other link).
 - **Headings.** The `<h1>` is the selected team (in `TeamPicker`), with the city
   and season attached in an `.sr-only` span since the visible design only has
   room for the short name. Section headings are `<h2>`; on the Players tab the
@@ -210,8 +243,10 @@ won't. Three things address that:
   It's deliberately kept out of `npm run build` (it needs a browser on the
   machine and the network for the webfont), so commit the PNG when it changes.
 
-Canonical URL, robots and sitemap all name `wnba.highlightfactory.app` — see the
-note in `HOSTING.md` about the four places to update if that ever changes.
+The production domain is named in `src/pageMeta.js` (`SITE_URL`, which drives
+every canonical and Open Graph URL), `src/config.js`, `index.html` and
+`public/robots.txt`. Change it in all four if the subdomain ever moves; the
+sitemap and the per-page canonicals follow `SITE_URL` automatically.
 
 ## Mobile
 
@@ -269,7 +304,8 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 | A section says "showing the numbers from …" | That endpoint failed on the last fetch, so those numbers came from the previous snapshot. Hover the note for the reason; re-run `npm run fetch` to try again. |
 | A Team-tab section shows "unavailable" | That endpoint failed **and** there was nothing recent enough to fall back on (no earlier snapshot, or it's over 21 days old). The red text under it shows the exact reason. Re-run `npm run fetch`. |
 | "No games found" | The fetched season has no completed games, or `SEASON` in `scripts/fetch-data.mjs` is wrong. Fix and re-run `npm run fetch`. |
-| Blank page / asset errors on a subfolder deploy | Make sure you uploaded the whole contents of `dist/` (including `assets/` and `data/`) into the subfolder. |
+| Blank page / asset errors after deploying | The build expects to be served from a domain root (see the note in step 5). Check that `/assets/…` and `/data/wnba.json` resolve at the top level, not inside a subfolder. |
+| A team or player URL shows the landing page | The host is falling back to the root `index.html` instead of serving the prerendered `dist/team/<team>/index.html`. Expected under `vite preview`; on a real static host, check that directory indexes are enabled. |
 
 ---
 
@@ -317,6 +353,9 @@ scripts/
   fetch-data.mjs        downloads ALL teams from stats.wnba.com -> public/data/wnba.json
                         (SEASON and the TEAM_EMOJI map live at the top of this file;
                          anything that fails is carried over from the previous file)
+  prerender.mjs         after `vite build`: writes one HTML page per team/player + sitemap.xml
+  build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
+  og-template.html      the artwork for the social share card
 public/
   data/wnba.json        the saved snapshot for every team (created by `npm run fetch`)
 src/
@@ -325,6 +364,8 @@ src/
   api.js                loads public/data/wnba.json (no network calls)
   palette.js            brand colors + type stack (edit colors here)
   config.js             site name, canonical URL, links back to highlightfactory.app
+  routes.js             the URL scheme (slugs, buildPath, resolveRoute) - shared with the build
+  pageMeta.js           per-route title / description / canonical - shared with the build
   BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
   useLeagueData.js      React hook around the loader
   Dashboard.jsx         per-player view (Players tab)

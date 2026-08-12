@@ -107,6 +107,26 @@ function LeaderCard({ label, leader, statKey, unit }) {
   );
 }
 
+// A player's name as a link to their own page. Falls back to plain text when no
+// href is available (the advanced feed occasionally lists a name that isn't on
+// the roster snapshot, and a dead link is worse than no link).
+function PlayerLink({ name, href, onGo }) {
+  if (!href) return name;
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        onGo && onGo(name);
+      }}
+      style={{ color: C.TXT, borderBottom: `1px solid ${C.LINE}` }}
+    >
+      {name}
+    </a>
+  );
+}
+
 function Section({ title, hint, stale, children, style }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22, ...style }}>
@@ -282,7 +302,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [] }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [], playerHref, onPlayer }) {
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -732,7 +752,11 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                 <tbody>
                   {advTable.map((p) => (
                     <tr key={p.playerId} style={{ borderBottom: `1px solid ${C.LINE}55` }}>
-                      <td style={{ padding: "9px 10px", fontWeight: 700, whiteSpace: "nowrap" }}>{p.name}</td>
+                      {/* This table lists the whole roster, so it doubles as
+                          the team page's link out to each player's page. */}
+                      <td style={{ padding: "9px 10px", fontWeight: 700, whiteSpace: "nowrap" }}>
+                        <PlayerLink name={p.name} href={playerHref && playerHref(p.name)} onGo={onPlayer} />
+                      </td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: C.MUTE }}>{p.gp}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right", color: C.MUTE }}>{p.min}</td>
                       <td style={{ padding: "9px 10px", textAlign: "right" }}>{p.usg}</td>

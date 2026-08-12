@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { C, FONT_DISPLAY } from "./palette";
 import { SITE, NAV_LINKS } from "./config.js";
+import { resolveRoute, buildPath, rosterSlugs } from "./routes.js";
+import { pageMeta, applyHead } from "./pageMeta.js";
 import BrandMark from "./BrandMark.jsx";
+import TeamBadge from "./TeamBadge.jsx";
 import { useLeagueData } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
@@ -241,21 +244,7 @@ function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div
-          style={{
-            width: 50,
-            height: 50,
-            borderRadius: 16,
-            background: `linear-gradient(135deg, ${C.BRAND}, ${C.BRAND_HI})`,
-            display: "grid",
-            placeItems: "center",
-            fontSize: 26,
-            lineHeight: 1,
-          }}
-          aria-hidden="true"
-        >
-          {team.emoji}
-        </div>
+        <TeamBadge team={team} size={50} />
         <div>
           <div className="hf-eyebrow" style={{ fontSize: 10, marginBottom: 2 }}>
             {season ? `${season} ` : ""}WNBA Analytics
@@ -303,6 +292,38 @@ function FooterCol({ title, links }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+// Every team, linked, on every page. The team switcher is a <select>, which a
+// crawler can't follow, so without this the team pages would only be reachable
+// from the sitemap — and nothing would pass authority between them.
+function TeamIndex({ teams, onPick }) {
+  if (!teams || !teams.length) return null;
+  return (
+    <nav className="hf-container" style={{ padding: "0 24px 40px" }} aria-label="All teams">
+      <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", color: C.MUTE, marginBottom: 14 }}>
+        All teams
+      </h2>
+      <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexWrap: "wrap", gap: "10px 18px" }}>
+        {teams.map((t) => (
+          <li key={t.id}>
+            <a
+              href={buildPath({ team: t, tab: "team" })}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                e.preventDefault();
+                onPick(t.id);
+              }}
+              style={{ fontSize: 14, color: C.TXT }}
+            >
+              <span aria-hidden="true">{t.emoji} </span>
+              {t.name}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 
@@ -389,6 +410,21 @@ function Shell({ league }) {
   // --- URL <-> state ------------------------------------------------------
   const slugs = useMemo(() => rosterSlugs(roster), [roster]);
   const path = buildPath({ team, tab, player: slugs[sel] });
+
+  // Real hrefs for the roster, so the player pages are reachable by a crawler
+  // (and openable in a new tab) rather than only by a click handler. The
+  // handlers still take over an ordinary left-click to keep navigation instant.
+  const playerHref = (i) => buildPath({ team, tab: "players", player: slugs[i] });
+  const playerHrefByName = (name) => {
+    const i = roster.findIndex((p) => p.name === name);
+    return i >= 0 ? playerHref(i) : null;
+  };
+  const goToPlayerByName = (name) => {
+    const i = roster.findIndex((p) => p.name === name);
+    if (i < 0) return;
+    setSel(i);
+    setTab("players");
+  };
 
   // Push the URL after an in-app change, and keep the head in step with it so
   // the rendered page matches the prerendered one Google first indexed.
@@ -478,10 +514,14 @@ function Shell({ league }) {
           shotZones={shotZones}
           leagueShotZones={leagueShotZones}
           teamZoneWins={teamZoneWins}
+          playerHref={playerHrefByName}
+          onPlayer={goToPlayerByName}
         />
       ) : (
-        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} positionShotZones={positionShotZones} />
+        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} positionShotZones={positionShotZones} playerHref={playerHref} />
       )}
+
+      <TeamIndex teams={teams} onPick={pickTeam} />
 
       <SiteFooter updated={updated} />
     </div>

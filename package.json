@@ -6,7 +6,7 @@
   "scripts": {
     "fetch": "node scripts/fetch-data.mjs",
     "dev": "vite",
-    "build": "vite build && node scripts/build-seo.mjs",
+    "build": "vite build && node scripts/prerender.mjs",
     "refresh": "node scripts/fetch-data.mjs && npm run build",
     "og": "node scripts/build-og.mjs",
     "preview": "vite preview"
