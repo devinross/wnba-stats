@@ -1,15 +1,17 @@
 # WNBA Analytics — setup guide
 
-A React dashboard for **every WNBA team**. Pick a team from the dropdown in the
-header (each shown with an emoji, e.g. "✨ Sparks", "🗽 Liberty"); each team has a
-**Team** tab and a **Players** tab, built from data pulled from **stats.wnba.com**.
+A React dashboard for **every WNBA team**, across **every season since 2017**.
+Pick a team from the dropdown in the header (each shown with an emoji, e.g.
+"✨ Sparks", "🗽 Liberty") and a season from the dropdown beside it; each team has
+a **Team** tab and a **Players** tab, built from data pulled from
+**stats.wnba.com**.
 
 The key idea: the website does **not** talk to stats.wnba.com. Instead you run a
-small script once that downloads the data and saves it to a file
-(`public/data/wnba.json`). The site just reads that file. So the deployed site
-is plain static files — no PHP, no proxy, no API key, and none of the CORS / IP
-blocking / "500" problems that come from calling stats.wnba.com live from a web
-host. You refresh the numbers by re-running the script whenever you want.
+small script that downloads the data and saves it as static files under
+`public/data/`. The site just reads those. So the deployed site is plain static
+files — no PHP, no proxy, no API key, and none of the CORS / IP blocking / "500"
+problems that come from calling stats.wnba.com live from a web host. You refresh
+the numbers by re-running the script whenever you want.
 
 This guide assumes you've **never used React**.
 
@@ -19,16 +21,25 @@ This guide assumes you've **never used React**.
 
 ```
   npm run fetch                          The website (static files)
-  +--------------------------+          +----------------------------+
-  | scripts/fetch-data.mjs   |  writes  | reads  public/data/        |
-  |  -> stats.wnba.com       | -------> |        wnba.json         |
-  |  (run on your Mac)       |  JSON    |  (no network calls at all) |
-  +--------------------------+          +----------------------------+
+  +--------------------------+          +------------------------------+
+  | scripts/fetch-data.mjs   |  writes  | reads  data/index.json        |
+  |  -> stats.wnba.com       | -------> |        data/<season>/league…  |
+  |  (run on your Mac)       |  JSON    |        data/<season>/teams/…  |
+  +--------------------------+          +------------------------------+
 ```
 
 Run the fetch script on your Mac (its IP isn't blocked by stats.wnba.com). It
-saves one snapshot containing all teams. Build the site from that snapshot and
-upload the static files. Switching teams in the UI is instant — no extra loads.
+writes one folder per season. Build the site from those and upload the static
+files.
+
+**Why the data is split up.** One file per season holds every team, which meant
+downloading ~900KB to look at one of them. Instead each season is a small
+`league.json` (the team list and the league-wide charts, ~20KB) plus one file per
+team (~60KB). A cold load is about **82KB instead of 912KB**; switching teams
+fetches one small file, and anything already fetched stays in memory for the rest
+of the session. Finished seasons never change, so their files are cached
+permanently by the browser (see `vercel.json`) — only the current season is ever
+re-downloaded.
 
 ---
 
@@ -51,35 +62,64 @@ npm install              # one time, downloads dependencies
 npm run fetch
 ```
 
-This downloads every team's games, box scores, on/off ratings, four factors,
-advanced player stats, league-wide ratings, and lineups, and writes them all to
-`public/data/wnba.json`. Because it loops over every team for a few of the
-endpoints, it makes ~40+ requests and takes a minute or two. It prints the real
-status of each request, e.g.:
+That downloads **the current season** — every team's games, box scores, on/off
+ratings, four factors, advanced player stats, league-wide ratings, lineups and
+shot zones. It makes ~45 requests and takes a minute or two, printing the real
+status of each one:
 
 ```
+Seasons: 2026  →  .../public/data
+
+────────────────────────────────────────────────────────────
+2026 (season in progress)
+
+Already on disk from 2026-08-11T11:00:12.994Z — will back-fill anything that fails today.
+
 League-wide data:
-  - team game log ... 120 rows
-  - player game log ... 1100 rows
-  - ratings ... 13 rows
-  - playeradv ... 150 rows
-
-Found 13 teams.
-
-Per-team data (roster - on/off - lineups):
-  - ✨ Sparks ... 14g 12p onoff✓ lineups✓
-  - 🗽 Liberty ... 15g 11p onoff✓ lineups✓
-  - ☀️ Sun ... 14g 12p onoff✓ lineups✓
+  • team game log … 494 rows
+  • player game log … 4887 rows
+  • ratings … 15 rows
+  ...
+Per-team data (roster · on/off · lineups):
+  • ✨ Sparks … 32 games · 18 players · 12 upcoming · on/off ✓ · lineups ✓
+  • 🗽 Liberty … 34 games · 17 players · 10 upcoming · on/off ✓ · lineups ✓
   ... (one line per team) ...
 
-Wrote .../public/data/wnba.json
-  13 teams
+Wrote .../public/data/2026 — 15 teams, 494 games
 ```
 
-If something fails, the script falls back on the numbers already in
-`wnba.json` rather than writing a hole — see **When a request fails** below.
-A line ending in `↺ kept onOff, lineups` means those two sections for that team
-came from the previous snapshot.
+If something fails, the script falls back on the numbers already on disk rather
+than writing a hole — see **When a request fails** below. A line ending in
+`↺ kept onOff, lineups` means those two sections for that team came from the
+previous fetch.
+
+### Other seasons
+
+Completed seasons never change, so they're fetched **once** and then left alone.
+The nightly refresh only touches the current one.
+
+```bash
+npm run fetch                     # the current season (what the nightly job runs)
+npm run fetch -- --missing        # any season since 2017 not on disk yet
+npm run fetch -- --season 2019    # one season, refetched from scratch
+npm run fetch -- --seasons 17-19  # a range (short or full years, or 2017,2019)
+npm run fetch -- --repair         # only the seasons with gaps in them
+npm run fetch -- --all            # every season from 2017 to now
+npm run fetch -- --out <dir>      # write somewhere other than public/data
+```
+
+Two constants at the top of `scripts/fetch-data.mjs` set the boundaries:
+`CURRENT_SEASON` (the season in progress — bump it when a new one starts) and
+`OLDEST_SEASON` (how far back `--missing`, `--repair` and `--all` reach; 2017 by
+default). Every endpoint this project uses goes back to **1997**, so you can set
+`OLDEST_SEASON` lower and run `npm run fetch -- --missing` if you want more
+history — budget about 1.5 minutes and ~750KB per season.
+
+**If a season came out wrong**, `--repair` retries the ones with holes in them.
+The script records how many datasets are missing from each season in
+`public/data/index.json`, and `--repair` re-runs exactly those; anything that
+fails again keeps the value it already had. To force a full refetch of one
+season regardless, name it: `npm run fetch -- --season 2019`.
 
 ### When a request fails
 
@@ -87,9 +127,9 @@ stats.wnba.com is flaky — an endpoint that answered yesterday can return a 500
 today. That used to punch a hole in the snapshot, and a chart that had been on
 the page for weeks would disappear until the next good fetch.
 
-Instead, **every dataset that fails or comes back empty is carried over from the
-last `wnba.json`**, tagged with the date it was really fetched. The section keeps
-rendering, with a note above it:
+Instead, **every dataset that fails or comes back empty is carried over from
+what's already on disk**, tagged with the date it was really fetched. The section
+keeps rendering, with a note above it:
 
 > ↺ The last refresh didn't return this — showing the numbers from Aug 11.
 
@@ -104,11 +144,14 @@ rendering, with a note above it:
 - **Nothing older than 21 days is reused** (`MAX_STALE_DAYS` in
   `scripts/fetch-data.mjs`). Past that the section goes back to showing
   "unavailable" rather than passing off three-week-old numbers as current.
-- **A different season never back-fills another.** Change `SEASON` and the old
-  snapshot is ignored.
-- **If the core team game log fails, nothing is written at all** — the script
-  exits non-zero and leaves the existing `wnba.json` in place, so the site keeps
-  serving the last good snapshot.
+- **A different season never back-fills another.** Each season only ever falls
+  back on its own earlier fetch.
+- **Completed seasons are exempt from both rules.** Their numbers are final, so
+  a value reused from an earlier fetch isn't stale — it's just the answer. It's
+  carried over however old it is, and shown without a note.
+- **If the core team game log fails, nothing is written for that season** — its
+  existing files are left untouched, so the site keeps serving them, and a
+  ten-season backfill carries on with the next year rather than giving up.
 
 ## 3. Preview locally
 
@@ -146,8 +189,8 @@ Bluehost serves files from **`public_html`**. Because the site is now fully
 static, **you do not need PHP or the old proxy** — just upload the files.
 
 **Option A - cPanel File Manager:** zip the **contents of `dist/`**, upload to
-`public_html`, and extract so `public_html/index.html` exists (and
-`public_html/data/wnba.json` exists alongside it).
+`public_html`, and extract so `public_html/index.html` exists (and the
+`public_html/data/` folder exists alongside it).
 
 **Option B - SFTP / your editor's publish feature:** upload the **contents of
 `dist/`** into `public_html/`.
@@ -162,10 +205,13 @@ static, **you do not need PHP or the old proxy** — just upload the files.
 
 Any host also needs to serve `dist/team/atlanta-dream/index.html` for the URL
 `/team/atlanta-dream`, which static hosts (Vercel, Netlify, Apache, nginx) do by
-default. Note that `vite preview` does **not** — it has a single-page-app
-fallback that answers every unknown path with the root `index.html`, so team and
-player URLs will all look like the landing page there. That's a quirk of the
-preview server, not the build.
+default. It also needs a **single-page-app fallback** for paths with no file of
+their own — a past season's player pages are rendered in the browser rather than
+prerendered (see [Search engines & sharing](#search-engines--sharing)), so
+`/2019/team/washington-mystics/elena-delle-donne` has to serve the root
+`index.html` instead of 404ing. `vercel.json` does this with a rewrite that
+excludes `/data` and `/assets`, so a genuinely missing data file still fails
+honestly rather than returning HTML.
 
 That's it. Load your domain and the dashboard appears.
 
@@ -199,25 +245,40 @@ A client-rendered app is two things search engines handle badly: the deployed
 HTML is `<div id="root"></div>` with no content in it, and the whole site lives
 at one URL. A stats site's search demand is almost all long-tail ("atlanta dream
 stats", "a'ja wilson shot chart"), which one URL can never answer. So the build
-turns the app into ~254 real pages:
+turns the app into hundreds of real pages:
 
 ```
-/                                 league landing
-/team/atlanta-dream               a team
-/team/atlanta-dream/allisha-gray  a player
+/                                      league landing, current season
+/team/atlanta-dream                    a team
+/team/atlanta-dream/allisha-gray       a player
+/2019                                  a past season's landing
+/2019/team/washington-mystics          that team, that season
+/2019/team/washington-mystics/…        a player that season (rendered in the browser)
 ```
 
-- **`src/routes.js`** owns the URL scheme — slugs, `buildPath`, `resolveRoute`,
-  `allRoutes`. It is imported by *both* the app and the build script, so the two
-  can't disagree about what a URL means. Player slugs are de-duplicated per
-  roster, so two similar names can't fight over one URL.
+The season in progress keeps the unprefixed URLs it has always had, so nothing
+already indexed moves; past seasons live under a year prefix.
+
+**What gets prerendered.** The current season in full — landing, every team,
+every player. Completed seasons get their landing and team pages only: another
+~250 player pages per archived year would multiply the build for little crawl
+value. Those URLs still work, they just render client-side, which is why the
+host needs the SPA fallback described in step 5.
+
+- **`src/routes.js`** owns the URL scheme — slugs, `buildPath`, `parsePath`,
+  `resolveInSeason`, `seasonRoutes`. It is imported by the app, the build script
+  *and* the fetch script, so none of them can disagree about what a URL means.
+  Player slugs are de-duplicated per roster (so two similar names can't fight
+  over one URL) and written into each season's `league.json` at fetch time, which
+  is what lets the browser resolve a player URL before that team's file arrives.
 - **`src/pageMeta.js`** owns the `<title>`, description and canonical for every
   route, and is likewise shared: `scripts/prerender.mjs` writes them into the
   static files, and `App.jsx` applies the same values during client-side
   navigation, so the page a visitor sees always matches the one Google indexed.
 - **`scripts/prerender.mjs`** runs as part of `npm run build`. For each route it
   writes `dist/<route>/index.html` containing that entity's real numbers (record,
-  per-game averages, leaders, roster — all read from `public/data/wnba.json`),
+  per-game averages, leaders, roster — read from `public/data/`, which it
+  reassembles from the split files),
   the right meta tags, and JSON-LD (`SportsTeam` / `Person` / `Dataset` plus
   breadcrumbs). React replaces the static content on mount, so it's on screen
   for a frame — but a crawler that doesn't run JavaScript still gets the
@@ -270,24 +331,29 @@ The dashboard is dense, so a few layouts are explicitly re-flowed for phones
 The numbers are a snapshot from when you last ran the fetch. To update:
 
 ```bash
-npm run fetch      # re-download into public/data/wnba.json
+npm run fetch      # re-download the current season into public/data/<season>/
 npm run build      # rebuild dist/  (or: npm run refresh to do both)
 ```
 
-Then re-upload `dist/` (or just the single updated `dist/data/wnba.json`).
+Then re-upload `dist/` (or just the updated `dist/data/<season>/` folder and
+`dist/data/index.json`).
 
-**Change the season:** edit `SEASON` near the top of `scripts/fetch-data.mjs`,
-then re-run `npm run fetch`.
+**When a new season starts:** bump `CURRENT_SEASON` at the top of
+`scripts/fetch-data.mjs` and run `npm run fetch`. Last year's data becomes an
+archive automatically — it moves under a `/<year>` URL prefix, stops being
+re-fetched, and drops to team-pages-only in the prerender. Optionally add the
+finished year to the immutable-cache rule in `vercel.json`; forgetting only
+costs a revalidation round trip.
 
 **Change a team's emoji:** edit the `TEAM_EMOJI` list near the top of
 `scripts/fetch-data.mjs` (each entry matches a keyword in the team name), then
 re-run `npm run fetch`. Any team that doesn't match gets a 🏀.
 
 **Refresh straight onto the server (optional):** you can point the script at any
-output path, so a cron job could refresh the live file without a rebuild:
+output directory, so a cron job could refresh the live files without a rebuild:
 
 ```bash
-node scripts/fetch-data.mjs /home/youruser/public_html/data/wnba.json
+node scripts/fetch-data.mjs --out /home/youruser/public_html/data
 ```
 
 (Only works if that server's IP isn't blocked by stats.wnba.com — many shared
@@ -299,12 +365,15 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 
 | Symptom | Fix |
 |---|---|
-| Site says "Couldn't load data/wnba.json" | You haven't fetched yet, or didn't upload `data/wnba.json`. Run `npm run fetch`, rebuild, and make sure `data/wnba.json` is next to `index.html`. |
+| Site says "Couldn't load data/index.json" | You haven't fetched yet, or didn't upload the `data/` folder. Run `npm run fetch`, rebuild, and make sure `data/` sits next to `index.html`. |
+| A season is missing from the dropdown | It isn't on disk. `npm run fetch -- --missing` fetches every season since `OLDEST_SEASON` that you don't have. |
+| A past season looks incomplete | `npm run fetch -- --repair` retries just the seasons with gaps recorded in `data/index.json`. |
 | `npm run fetch` stops at the team game log | stats.wnba.com refused the core request from your network. Try again; if it persists, your IP may be temporarily blocked - try a different network. |
 | A section says "showing the numbers from …" | That endpoint failed on the last fetch, so those numbers came from the previous snapshot. Hover the note for the reason; re-run `npm run fetch` to try again. |
 | A Team-tab section shows "unavailable" | That endpoint failed **and** there was nothing recent enough to fall back on (no earlier snapshot, or it's over 21 days old). The red text under it shows the exact reason. Re-run `npm run fetch`. |
-| "No games found" | The fetched season has no completed games, or `SEASON` in `scripts/fetch-data.mjs` is wrong. Fix and re-run `npm run fetch`. |
-| Blank page / asset errors after deploying | The build expects to be served from a domain root (see the note in step 5). Check that `/assets/…` and `/data/wnba.json` resolve at the top level, not inside a subfolder. |
+| "No games found" | The fetched season has no completed games, or `CURRENT_SEASON` in `scripts/fetch-data.mjs` is wrong. Fix and re-run `npm run fetch`. |
+| Blank page / asset errors after deploying | The build expects to be served from a domain root (see the note in step 5). Check that `/assets/…` and `/data/index.json` resolve at the top level, not inside a subfolder. |
+| A past season's *player* URL 404s | The host has no SPA fallback. Those pages aren't prerendered by design — see step 5. |
 | A team or player URL shows the landing page | The host is falling back to the root `index.html` instead of serving the prerendered `dist/team/<team>/index.html`. Expected under `vite preview`; on a real static host, check that directory indexes are enabled. |
 
 ---
@@ -312,7 +381,8 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 ## What data is pulled
 
 The fetch script calls these stats.wnba.com endpoints (LeagueID 10 = WNBA) for
-every team and transforms the responses into `wnba.json`. The game logs and the
+every team, once per season, and transforms the responses into the files under
+`public/data/<season>/`. The game logs and the
 advanced team/player/four-factor dashboards are league-wide (one call each); the
 roster, on/off, and lineup endpoints are per-team (one call per team):
 
@@ -344,30 +414,64 @@ The `leaguedash*` endpoints are sent the WNBA's standard filter parameters but
 **not** the NBA-only `TwoWay` / `ISTRound` params, which make the WNBA versions
 return errors.
 
+## Checking the numbers against wnba.com
+
+Every section on the site carries a **source footnote** linking to the
+stats.wnba.com page it was built from, with the season and filters already
+applied, so any number can be opened and checked by hand. The mapping lives in
+`src/sources.js` — one entry per dataset, with query strings that mirror the
+parameter sets in `scripts/fetch-data.mjs`. **If you change a `PerMode` or a
+`MeasureType` in the fetch script, change it in `sources.js` too**, or the
+footnote will point at a view that doesn't reconcile.
+
+Where the site computes something wnba.com doesn't publish, the footnote also
+states the arithmetic. Two things are worth knowing when a number here doesn't
+match another site:
+
+- **Possessions are an estimate**, not a count:
+  `0.5 × ((FGA + 0.44×FTA − OREB + TOV) + the opponent's same line)`. Every
+  "per 100" number on the site divides by that. Other sites use different
+  estimators — Basketball-Reference uses a `0.4` free-throw coefficient and
+  subtracts a rebound-rate-weighted term instead of raw OREB, and wnba.com's own
+  `POSS` field is different again. The three disagree by roughly 3%, so a rate
+  that looks a little low here usually isn't a data error — it's the
+  denominator. (For the 2025 Sparks: 31.2 3PA/100 here, 31.4 by wnba.com's
+  `POSS`, 32.1 by Basketball-Reference.)
+- **Turnovers come from the player game log**, which has no row for *team*
+  turnovers (shot-clock violations, 5-second inbounds, too many players), so
+  team turnover totals run slightly under wnba.com's — 38 over the 2025 Sparks
+  season, 595 league-wide. Every other box-score field (FGA, 3PA, FTA, OREB,
+  DREB, PTS) reconciles exactly against the team game log. This affects the
+  possession estimate and the four factors' TOV%.
+
 ## Project map
 
 ```
 index.html              app entry
 vite.config.js          dev server + build config (no proxy needed anymore)
 scripts/
-  fetch-data.mjs        downloads ALL teams from stats.wnba.com -> public/data/wnba.json
-                        (SEASON and the TEAM_EMOJI map live at the top of this file;
-                         anything that fails is carried over from the previous file)
-  prerender.mjs         after `vite build`: writes one HTML page per team/player + sitemap.xml
+  fetch-data.mjs        downloads a season from stats.wnba.com -> public/data/<season>/
+                        (CURRENT_SEASON, OLDEST_SEASON and the TEAM_EMOJI map live at
+                         the top; anything that fails is carried over from what's on disk)
+  prerender.mjs         after `vite build`: one HTML page per team/player, every season, + sitemap.xml
   build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
   og-template.html      the artwork for the social share card
 public/
-  data/wnba.json        the saved snapshot for every team (created by `npm run fetch`)
+  data/index.json       which seasons exist, when each was fetched, what's missing
+  data/<season>/league.json      that season's team list + league-wide charts
+  data/<season>/teams/<id>.json  one file per team (its games, roster, on/off, lineups)
 src/
   main.jsx              boots React
-  App.jsx               team dropdown + tabs (Team / Players) + loading / error states
-  api.js                loads public/data/wnba.json (no network calls)
+  App.jsx               season + team dropdowns, tabs, routing, loading / error states
+  api.js                loads the data files on demand and caches them (no network calls to stats.wnba.com)
   palette.js            brand colors + type stack (edit colors here)
   config.js             site name, canonical URL, links back to highlightfactory.app
-  routes.js             the URL scheme (slugs, buildPath, resolveRoute) - shared with the build
+  routes.js             the URL scheme (slugs, buildPath, parsePath) - shared with the build + fetch
   pageMeta.js           per-route title / description / canonical - shared with the build
+  sources.js            each dataset -> the wnba.com page it came from (+ the formulas we apply)
+  SourceNote.jsx        the "Source · wnba.com > ..." footnote under every section
   BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
-  useLeagueData.js      React hook around the loader
+  useLeagueData.js      React hooks for the three loads: season index, season, team
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)

@@ -1,26 +1,46 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// WNBA Analytics — data fetcher (all teams)
+// WNBA Analytics — data fetcher (all teams, any season)
 //
-// Pulls every WNBA team's data from stats.wnba.com ONCE and writes it to a
-// single static file (public/data/wnba.json) that the web app reads. The
-// deployed site then never talks to stats.wnba.com — no proxy, no CORS, no IP
-// blocking, no runtime 500s. Re-run this whenever you want to refresh.
+// Pulls WNBA data from stats.wnba.com and writes it to static files the web app
+// reads. The deployed site never talks to stats.wnba.com — no proxy, no CORS,
+// no IP blocking, no runtime 500s.
 //
-//     npm run fetch
-//     npm run fetch -- /path/to/public_html/data/wnba.json   (custom output)
+//     npm run fetch                     just the current season (the nightly job)
+//     npm run fetch -- --missing        fetch any season since 2017 not on disk
+//     npm run fetch -- --season 2019    one season, refetched from scratch
+//     npm run fetch -- --seasons 17-19  a range (short or full years)
+//     npm run fetch -- --repair         retry only the seasons with gaps in them
+//     npm run fetch -- --out <dir>      write somewhere other than public/data
+//
+// Completed seasons never change, so they are fetched once and then left alone;
+// only the current season is worth re-running. Output layout (see writeSeason):
+//
+//     public/data/index.json            the season list the app boots from
+//     public/data/2026/league.json      teams + league-wide sets for that season
+//     public/data/2026/teams/<id>.json  one file per team
 //
 // Run from a machine whose IP stats.wnba.com doesn't block (your Mac is fine;
 // many shared hosts are not). It prints the real status of every request.
 // ---------------------------------------------------------------------------
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// The app's own slug rules, imported rather than reimplemented so a player's
+// URL can never mean one thing in the data and another in the browser.
+import { rosterSlugs } from "../src/routes.js";
 
 // ----- config ---------------------------------------------------------------
 
-const SEASON = 2026; // WNBA season (single calendar year). Change + re-run to switch seasons.
+// The season in progress: the only one the nightly refresh touches, and the one
+// the site opens on. Bump it when a new season starts.
+const CURRENT_SEASON = 2026;
+// How far back --missing / --repair / --seasons reach when given no explicit
+// range. Every endpoint we use goes back to 1997 if you ever want more.
+const OLDEST_SEASON = 2017;
+
 const HOST = "https://stats.wnba.com";
 const REQUEST_TIMEOUT_MS = 30000;
 const DELAY_BETWEEN_CALLS_MS = 500; // be gentle with the undocumented endpoint
@@ -28,6 +48,8 @@ const DELAY_BETWEEN_CALLS_MS = 500; // be gentle with the undocumented endpoint
 // How long a carried-over dataset may keep standing in for a live one (see the
 // "previous-snapshot fallback" section below). Past this, we'd rather show the
 // section as unavailable than pass off three-week-old ratings as current.
+// Completed seasons are exempt: their numbers are final, so last year's copy of
+// a dataset is not "stale", it's just the answer.
 const MAX_STALE_DAYS = 21;
 
 const HEADERS = {
@@ -66,40 +88,83 @@ function emojiFor(name) {
   return hit ? hit[1] : "🏀";
 }
 
-const DEFAULT_OUT = fileURLToPath(new URL("../public/data/wnba.json", import.meta.url));
-const OUT_PATH = process.argv[2] || DEFAULT_OUT;
+const DEFAULT_OUT_DIR = fileURLToPath(new URL("../public/data", import.meta.url));
 
 // ----- parameter sets --------------------------------------------------------
+// Every set is a function of the season, since one run can cover several.
 
-const COMMON = {
-  LeagueID: "10", Season: String(SEASON), SeasonType: "Regular Season",
+const COMMON = (season) => ({
+  LeagueID: "10", Season: String(season), SeasonType: "Regular Season",
   Counter: "0", Sorter: "DATE", Direction: "ASC", DateFrom: "", DateTo: "",
-};
+});
 
-const ONOFF = {
-  LeagueID: "10", Season: String(SEASON), SeasonType: "Regular Season",
+const ONOFF = (season) => ({
+  LeagueID: "10", Season: String(season), SeasonType: "Regular Season",
   MeasureType: "Advanced", PerMode: "Totals", PlusMinus: "N", PaceAdjust: "N",
   Rank: "N", Outcome: "", Location: "", Month: "0", SeasonSegment: "",
   DateFrom: "", DateTo: "", OpponentTeamID: "0", VsConference: "", VsDivision: "",
   GameSegment: "", Period: "0", LastNGames: "0",
-};
+});
 
 // Full WNBA filter set, deliberately WITHOUT the NBA-only TwoWay/ISTRound params.
-const DASH_COMMON = {
-  LeagueID: "10", Season: String(SEASON), SeasonType: "Regular Season",
+const DASH_COMMON = (season) => ({
+  LeagueID: "10", Season: String(season), SeasonType: "Regular Season",
   PerMode: "PerGame", MeasureType: "Advanced", PlusMinus: "N", PaceAdjust: "N",
   Rank: "N", Outcome: "", Location: "", Month: "0", SeasonSegment: "",
   DateFrom: "", DateTo: "", OpponentTeamID: "0", VsConference: "", VsDivision: "",
   Conference: "", Division: "", GameScope: "", GameSegment: "", Period: "0",
   ShotClockRange: "", LastNGames: "0", PORound: "0", TeamID: "0", DistanceRange: "",
-};
-const TEAM_DASH = { ...DASH_COMMON, PlayerExperience: "", PlayerPosition: "", StarterBench: "" };
-const PLAYER_DASH = { ...TEAM_DASH, College: "", Country: "", DraftPick: "", DraftYear: "", Height: "", Weight: "" };
-const LINEUP_DASH = { ...DASH_COMMON, GroupQuantity: "5", GameID: "" };
+});
+const TEAM_DASH = (season) => ({ ...DASH_COMMON(season), PlayerExperience: "", PlayerPosition: "", StarterBench: "" });
+const PLAYER_DASH = (season) => ({ ...TEAM_DASH(season), College: "", Country: "", DraftPick: "", DraftYear: "", Height: "", Weight: "" });
+const LINEUP_DASH = (season) => ({ ...DASH_COMMON(season), GroupQuantity: "5", GameID: "" });
 
 // ----- fetch + parse helpers -------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ----- progress reporting -----------------------------------------------------
+// Every step announces itself before it goes out and reports what came back when
+// it lands. On a terminal the open line also ticks a seconds counter while we
+// wait, so a slow endpoint (they get REQUEST_TIMEOUT_MS before giving up) reads
+// as "still working" rather than a hung script. Redirected to a log file — the
+// nightly job — the ticker is skipped and each step stays one static line.
+
+const TTY = Boolean(process.stdout.isTTY);
+const CLEAR_EOL = "\u001b[K"; // rub out the previous tick, which may be longer
+const elapsed = (since) => `${((Date.now() - since) / 1000).toFixed(1)}s`;
+let live = null; // { label, started, timer } while a step is in flight
+
+function begin(label) {
+  live = { label, started: Date.now(), timer: null };
+  process.stdout.write(label);
+  if (!TTY) return;
+  live.timer = setInterval(() => {
+    process.stdout.write(`\r${label}${elapsed(live.started)}${CLEAR_EOL}`);
+  }, 1000);
+  live.timer.unref(); // a ticking line must never be what keeps the run alive
+}
+
+// A step that threw past its own handler: stop the ticker and end the line, so
+// the error that follows isn't written over a half-finished one.
+function abandon() {
+  if (!live) return;
+  clearInterval(live.timer);
+  if (TTY) process.stdout.write(`\r${live.label}${CLEAR_EOL}`);
+  console.log("FAILED");
+  live = null;
+}
+
+// Close the line begin() opened with whatever the step produced. Anything that
+// took a moment carries its own timing, so the slow parts of a run are obvious.
+function done(result) {
+  if (!live) return void console.log(result);
+  clearInterval(live.timer);
+  const took = Date.now() - live.started;
+  if (TTY) process.stdout.write(`\r${live.label}${CLEAR_EOL}`);
+  console.log(took >= 1000 ? `${result} · ${elapsed(live.started)}` : result);
+  live = null;
+}
 
 async function statsFetch(endpoint, params) {
   const usp = new URLSearchParams(params);
@@ -329,16 +394,26 @@ function shapeLineups(rows) {
 // we wrote last time and tagged with the date it was really fetched, which lets
 // the UI keep rendering the section with an "as of …" note.
 
-async function readPreviousSnapshot(path) {
-  let prev;
+// Reassemble a season already on disk into the same shape fetchSeason builds,
+// so the carry-over below can treat "what we have" and "what we just fetched"
+// identically. Returns null if that season has never been written.
+async function readSeason(dir, season) {
+  let league;
   try {
-    prev = JSON.parse(await readFile(path, "utf8"));
+    league = JSON.parse(await readFile(leaguePath(dir, season), "utf8"));
   } catch (_) {
-    return null; // first run, or the file is missing / unreadable / corrupt
+    return null; // never fetched, or the file is missing / unreadable / corrupt
   }
-  if (!prev || !prev.meta || !prev.meta.generatedAt || !Array.isArray(prev.teams) || !prev.data) return null;
-  if (Number(prev.meta.season) !== SEASON) return null; // never back-fill across seasons
-  return prev;
+  if (!league || !league.meta || !league.meta.generatedAt || !Array.isArray(league.teams)) return null;
+  if (Number(league.meta.season) !== Number(season)) return null; // never back-fill across seasons
+
+  const data = {};
+  for (const team of league.teams) {
+    try {
+      data[team.id] = JSON.parse(await readFile(teamPath(dir, season, team.id), "utf8"));
+    } catch (_) { /* a missing team file just means nothing to carry over for it */ }
+  }
+  return { ...league, data };
 }
 
 // "Nothing usable came back": null/undefined, an empty array, or an empty object.
@@ -357,7 +432,10 @@ function isEmpty(v) {
 // at MAX_STALE_DAYS instead of looking fresh forever.
 // `expired` collects the keys that were dropped for being too old, so the run
 // can report why a section is about to vanish from the site.
-function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt, expired } = {}) {
+// `final` (a completed season) turns off both the age limit and the staleness
+// bookkeeping: those numbers can't change, so a copy from an earlier fetch is
+// the right answer rather than an old one, and the UI shouldn't caveat it.
+function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt, expired, final = false } = {}) {
   const stale = {};
   if (!prev) return stale;
   const oldest = Date.now() - MAX_STALE_DAYS * 86400000;
@@ -365,86 +443,194 @@ function carryOver(fresh, prev, keys, { errors = {}, prevStale = {}, prevAt, exp
     if (!isEmpty(fresh[key]) || isEmpty(prev[key])) continue;
     const at = (prevStale[key] && prevStale[key].at) || prevAt;
     const ts = Date.parse(at);
-    if (!Number.isFinite(ts) || ts < oldest) {
+    if (!final && (!Number.isFinite(ts) || ts < oldest)) {
       if (expired) expired.add(key);
       continue;
     }
     fresh[key] = prev[key];
-    stale[key] = { at, reason: errors[key] || "the endpoint returned no rows this run" };
+    if (!final) stale[key] = { at, reason: errors[key] || "the endpoint returned no rows this run" };
   }
   return stale;
 }
 
+// ----- output layout ---------------------------------------------------------
+// One ~900KB file per season made every visitor download all 15 teams to look at
+// one. Splitting it per team means a cold load is the season's league-wide sets
+// (~10KB) plus the team you asked for (~60KB), and switching teams fetches one
+// small file that then caches. Completed seasons are immutable, so their files
+// can be cached forever (see vercel.json).
+
+const indexPath = (dir) => join(dir, "index.json");
+const leaguePath = (dir, season) => join(dir, String(season), "league.json");
+const teamPath = (dir, season, teamId) => join(dir, String(season), "teams", `${teamId}.json`);
+
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(value));
+}
+
+/**
+ * Split one season's payload across disk and refresh the season index.
+ * `data` (per-team bundles) is peeled off into teams/<id>.json; everything else
+ * — the team list, the league-wide sets — stays in league.json, plus a slug per
+ * player so the app can resolve a player URL before that team's file arrives.
+ */
+async function writeSeason(dir, payload) {
+  const { data, ...league } = payload;
+  const season = payload.meta.season;
+
+  // Each team carries its roster's names and URL slugs, in roster order. It's a
+  // few KB that saves the app from downloading a team just to discover whether
+  // /team/atlanta-dream/allisha-gray points at anyone.
+  league.teams = league.teams.map((t) => {
+    const roster = (data[t.id] || {}).roster || [];
+    const slugs = rosterSlugs(roster);
+    return { ...t, players: roster.map((p, i) => ({ name: p.name, slug: slugs[i] })) };
+  });
+
+  await writeJson(leaguePath(dir, season), league);
+  for (const team of league.teams) {
+    await writeJson(teamPath(dir, season, team.id), data[team.id] || {});
+  }
+
+  // Drop team files from a previous fetch whose team no longer exists (an
+  // expansion team's id changing, say) so the directory can't accumulate ghosts.
+  const keep = new Set(league.teams.map((t) => `${t.id}.json`));
+  try {
+    for (const name of await readdir(join(dir, String(season), "teams"))) {
+      if (name.endsWith(".json") && !keep.has(name)) await rm(join(dir, String(season), "teams", name));
+    }
+  } catch (_) { /* directory was just created — nothing stale in it */ }
+
+  return updateIndex(dir, payload); // the season's index entry, for the summary
+}
+
+/**
+ * The tiny file the app boots from: which seasons exist, when each was fetched,
+ * and how many datasets are still missing from it (what --repair goes after).
+ * Rewritten from the existing index plus this season's entry, so fetching one
+ * season never disturbs the others' records.
+ */
+async function updateIndex(dir, payload) {
+  let index = { currentSeason: CURRENT_SEASON, seasons: [] };
+  try {
+    const existing = JSON.parse(await readFile(indexPath(dir), "utf8"));
+    if (existing && Array.isArray(existing.seasons)) index = existing;
+  } catch (_) { /* first season written */ }
+
+  const season = payload.meta.season;
+  const entry = {
+    season,
+    generatedAt: payload.meta.generatedAt,
+    teams: payload.teams.length,
+    games: Object.values(payload.data).reduce((a, b) => a + (b.games || []).length, 0),
+    missing: countMissing(payload),
+  };
+
+  index.currentSeason = CURRENT_SEASON;
+  index.seasons = [...index.seasons.filter((s) => Number(s.season) !== Number(season)), entry]
+    .sort((a, b) => b.season - a.season); // newest first: the order the dropdown wants
+  await writeJson(indexPath(dir), index);
+  return entry;
+}
+
+// Datasets that would render as "unavailable" — nothing fetched and nothing to
+// carry over. Zero means the season is complete and --repair can skip it.
+function countMissing(payload) {
+  const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"];
+  const TEAM_KEYS = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
+  let missing = LEAGUE_KEYS.filter((k) => isEmpty(payload[k])).length;
+  for (const bundle of Object.values(payload.data)) {
+    missing += TEAM_KEYS.filter((k) => isEmpty(bundle[k])).length;
+  }
+  return missing;
+}
+
 // ----- main ------------------------------------------------------------------
 
-async function main() {
-  console.log(`\nWNBA Analytics — fetching ${SEASON} data from stats.wnba.com\n`);
+/**
+ * Fetch one season and return its payload (the shape writeSeason splits up).
+ * `final` marks a completed season: no schedule to look ahead at, and anything
+ * reused from an earlier fetch is simply correct rather than stale.
+ */
+async function fetchSeason(season, { outDir, final, nth, of }) {
+  const startedAt = Date.now();
+  const which = of > 1 ? `  [season ${nth} of ${of}]` : "";
+  console.log(`\n${"─".repeat(64)}\n${season}${final ? " (completed season)" : " (season in progress)"}${which}\n`);
 
   // Anything that fails below falls back on this (see "previous-snapshot
   // fallback"), so a bad night degrades to older numbers instead of blank charts.
-  const prev = await readPreviousSnapshot(OUT_PATH);
+  const prev = await readSeason(outDir, season);
   const prevAt = prev ? prev.meta.generatedAt : null;
   console.log(
     prev
-      ? `Previous snapshot: ${prevAt} — will back-fill anything that fails today.\n`
-      : "No usable previous snapshot — nothing to fall back on if a request fails.\n"
+      ? `Already on disk from ${prevAt} — will back-fill anything that fails today.\n`
+      : "Nothing on disk for this season — nothing to fall back on if a request fails.\n"
   );
 
   // ----- league-wide data (one call each) -----
-  console.log("League-wide data:");
-  process.stdout.write("  • team game log … ");
-  const teamRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON, PlayerOrTeam: "T" }), "LeagueGameLog");
+  // Each one is numbered so a run that stalls says how far in it got. A
+  // completed season skips the schedule call, hence one step fewer.
+  const LEAGUE_STEPS = final ? 6 : 7;
+  let stepNo = 0;
+  // Every line carries its season: one run can cover ten of them (--missing),
+  // and in the log a line has to say which season it belongs to on its own.
+  const step = (label) => begin(`  • ${season} [${++stepNo}/${LEAGUE_STEPS}] ${label} … `);
+
+  console.log(`League-wide data for ${season}:`);
+  step("team game log");
+  const teamRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON(season), PlayerOrTeam: "T" }), "LeagueGameLog");
   if (!teamRows.length) throw new Error("No team game-log rows returned — cannot continue.");
-  console.log(`${teamRows.length} rows`);
+  done(`${teamRows.length} rows`);
   await sleep(DELAY_BETWEEN_CALLS_MS);
 
   // The player game log is the source of every box score (rosters, four
   // factors, team profiles). It used to be fatal; now it degrades to the
   // previous snapshot's rosters so the Players tab doesn't empty out.
-  process.stdout.write("  • player game log … ");
+  step("player game log");
   let playerRows = [];
   let playerLogErr = null;
   try {
-    playerRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON, PlayerOrTeam: "P" }), "LeagueGameLog");
-    console.log(`${playerRows.length} rows`);
+    playerRows = toObjects(await statsFetch("leaguegamelog", { ...COMMON(season), PlayerOrTeam: "P" }), "LeagueGameLog");
+    done(`${playerRows.length} rows`);
     if (!playerRows.length) playerLogErr = "No player game-log rows returned.";
   } catch (e) {
     playerLogErr = e.message;
-    console.log(`FAILED — ${e.message}`);
+    done(`FAILED — ${e.message}`);
   }
   await sleep(DELAY_BETWEEN_CALLS_MS);
 
   // ----- three league-wide dashboards (advanced ratings, four factors, player advanced) -----
   const errLeague = {};
   async function dash(label, endpoint, params, setName) {
-    process.stdout.write(`  • ${label} … `);
+    step(label);
     try {
       const rows = toObjects(await statsFetch(endpoint, params), setName);
-      console.log(`${rows.length} rows`);
+      done(`${rows.length} rows`);
       await sleep(DELAY_BETWEEN_CALLS_MS);
       return rows;
     } catch (e) {
-      console.log(`FAILED — ${e.message}`);
+      done(`FAILED — ${e.message}`);
       errLeague[label] = e.message;
       await sleep(DELAY_BETWEEN_CALLS_MS);
       return [];
     }
   }
-  const ratingRows = await dash("ratings", "leaguedashteamstats", { ...TEAM_DASH, MeasureType: "Advanced", TeamID: "0" }, "LeagueDashTeamStats");
-  const advRows = await dash("playeradv", "leaguedashplayerstats", { ...PLAYER_DASH, MeasureType: "Advanced", TeamID: "0" }, "LeagueDashPlayerStats");
+  const ratingRows = await dash("ratings", "leaguedashteamstats", { ...TEAM_DASH(season), MeasureType: "Advanced", TeamID: "0" }, "LeagueDashTeamStats");
+  const advRows = await dash("playeradv", "leaguedashplayerstats", { ...PLAYER_DASH(season), MeasureType: "Advanced", TeamID: "0" }, "LeagueDashPlayerStats");
 
   // Shot-location zones (one call each, all teams / all players). These use a
   // two-tier header, so they go through shapeShotZones rather than the generic
   // dash() helper. Totals (not PerGame) so league averages aggregate correctly.
   async function shotDash(label, endpoint, params, idFields) {
-    process.stdout.write(`  • ${label} … `);
+    step(label);
     try {
       const rows = shapeShotZones(await statsFetch(endpoint, params), idFields);
-      console.log(`${rows.length} rows`);
+      done(`${rows.length} rows`);
       await sleep(DELAY_BETWEEN_CALLS_MS);
       return rows;
     } catch (e) {
-      console.log(`FAILED — ${e.message}`);
+      done(`FAILED — ${e.message}`);
       errLeague[label] = e.message;
       await sleep(DELAY_BETWEEN_CALLS_MS);
       return [];
@@ -452,12 +638,12 @@ async function main() {
   }
   const teamZoneRows = await shotDash(
     "teamShotZones", "leaguedashteamshotlocations",
-    { ...TEAM_DASH, MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
+    { ...TEAM_DASH(season), MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
     ["TEAM_ID", "TEAM_NAME"]
   );
   const playerZoneRows = await shotDash(
     "playerShotZones", "leaguedashplayershotlocations",
-    { ...PLAYER_DASH, MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
+    { ...PLAYER_DASH(season), MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
     ["PLAYER_ID", "PLAYER_NAME"]
   );
 
@@ -499,7 +685,7 @@ async function main() {
     prevAt,
     prevStale: (prev && prev.stale) || {},
     errors: { teamRanks: errLeague.ratings },
-    expired,
+    expired, final,
   });
 
   // Current W-L (from played games) and net rating, keyed by team — used to
@@ -515,11 +701,13 @@ async function main() {
   const netByTeam = new Map(rankedTeams.map((t) => [t.teamId, t.net]));
 
   // ----- schedule → each team's upcoming (not-yet-played) games -----
+  // A completed season has nothing upcoming, so that request is simply skipped.
   const upcomingByTeam = new Map();
   let scheduleErr = null;
-  process.stdout.write("  • schedule … ");
+  if (!final) {
+  step("schedule");
   try {
-    const sched = await statsFetch("scheduleleaguev2", { LeagueID: "10", Season: String(SEASON) });
+    const sched = await statsFetch("scheduleleaguev2", { LeagueID: "10", Season: String(season) });
     const gameDates = (sched && sched.leagueSchedule && sched.leagueSchedule.gameDates) || [];
     const cutoff = Date.now() - 18 * 3600 * 1000; // keep games from ~today onward
     const annotate = (oppTeam) => {
@@ -556,12 +744,13 @@ async function main() {
       list.sort((a, b) => a.ts - b.ts);
       list.forEach((x) => delete x.ts); // sorting key only; keep the JSON tidy
     }
-    console.log(`${count} upcoming games`);
+    done(`${count} upcoming games`);
   } catch (e) {
     scheduleErr = e.message;
-    console.log(`FAILED — ${e.message}`);
+    done(`FAILED — ${e.message}`);
   }
   await sleep(DELAY_BETWEEN_CALLS_MS);
+  }
 
   // Per-(game, team) box-score totals from the player game log, used to derive
   // four factors for each team and its opponents.
@@ -683,16 +872,26 @@ async function main() {
   const playerPosById = new Map();
 
   // ----- per-team loops (roster, on/off, lineups) -----
-  console.log("Per-team data (roster · on/off · lineups):");
+  console.log(`Per-team data for ${season} (roster · on/off · lineups) — ${teamIds.length} teams, 3 requests each:`);
   const teams = [];
   const data = {};
 
-  for (const teamId of teamIds) {
+  // Per-team failures, grouped by request and message: one endpoint breaking for
+  // every team should read as a line naming the teams, not fifteen lines.
+  const teamFails = new Map(); // `${label}|${message}` -> { label, message, teams }
+  function noteFail(label, message, teamName) {
+    if (!message) return;
+    const key = `${label}|${message}`;
+    if (!teamFails.has(key)) teamFails.set(key, { label, message, teams: [] });
+    teamFails.get(key).teams.push(teamName);
+  }
+
+  for (const [teamNo, teamId] of teamIds.entries()) {
     const fullName = nameById.get(teamId);
     const { teamName, city } = splitName(fullName);
     const abbr = abbrById.get(teamId) || "";
     const emoji = emojiFor(fullName);
-    process.stdout.write(`  • ${emoji} ${teamName} … `);
+    begin(`  • ${season} [${teamNo + 1}/${teamIds.length}] ${emoji} ${teamName} … `);
 
     const games = buildGames(teamRows, teamId, rowsByGame, scoreOf);
     const idToIndex = new Map(games.map((g) => [g.id, g.i]));
@@ -706,14 +905,18 @@ async function main() {
     const meta = new Map();
     try {
       const rosterRows = toObjects(
-        await statsFetch("commonteamroster", { TeamID: String(teamId), Season: String(SEASON), LeagueID: "10" }),
+        await statsFetch("commonteamroster", { TeamID: String(teamId), Season: String(season), LeagueID: "10" }),
         "CommonTeamRoster"
       );
       for (const r of rosterRows) {
         meta.set(r.PLAYER_ID, { num: r.NUM, pos: r.POSITION });
         if (!playerPosById.has(r.PLAYER_ID)) playerPosById.set(r.PLAYER_ID, r.POSITION);
       }
-    } catch (_) { /* jersey/pos are cosmetic */ }
+    } catch (e) {
+      // Jersey/position are cosmetic, so this never fails the team — but it is
+      // still a request that didn't answer, so the run gets to say so.
+      noteFail("roster meta (jersey/position)", e.message, teamName);
+    }
     await sleep(DELAY_BETWEEN_CALLS_MS);
 
     const roster = buildRoster(playerRows, teamId, idToIndex, meta);
@@ -722,7 +925,7 @@ async function main() {
     // on/off
     let onOff = [];
     try {
-      onOff = shapeOnOff(await statsFetch("teamplayeronoffdetails", { ...ONOFF, TeamID: String(teamId) }));
+      onOff = shapeOnOff(await statsFetch("teamplayeronoffdetails", { ...ONOFF(season), TeamID: String(teamId) }));
       if (!onOff.length) errors.onOff = "No rows returned.";
     } catch (e) { errors.onOff = e.message; }
     await sleep(DELAY_BETWEEN_CALLS_MS);
@@ -731,7 +934,7 @@ async function main() {
     let lineups = [];
     try {
       lineups = shapeLineups(
-        toObjects(await statsFetch("leaguedashlineups", { ...LINEUP_DASH, MeasureType: "Advanced", PerMode: "Totals", TeamID: String(teamId) }), "Lineups")
+        toObjects(await statsFetch("leaguedashlineups", { ...LINEUP_DASH(season), MeasureType: "Advanced", PerMode: "Totals", TeamID: String(teamId) }), "Lineups")
       );
       if (!lineups.length) errors.lineups = "No rows returned.";
     } catch (e) { errors.lineups = e.message; }
@@ -761,7 +964,7 @@ async function main() {
     if (isEmpty(bundle.roster) && prevBundle) {
       const pair = { games: [], roster: [] };
       const carried = carryOver(pair, prevBundle, ["games", "roster"], {
-        prevAt, prevStale, expired,
+        prevAt, prevStale, expired, final,
         errors: { games: playerLogErr, roster: playerLogErr },
       });
       if (carried.games && carried.roster) {
@@ -775,23 +978,34 @@ async function main() {
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
     Object.assign(stale, carryOver(bundle, prevBundle, fallbackKeys, {
-      prevAt, prevStale, expired,
+      prevAt, prevStale, expired, final,
       errors: { ...errors, upcoming: scheduleErr },
     }));
     if (Object.keys(stale).length) bundle.stale = stale;
     data[teamId] = bundle;
 
+    // The two per-team requests get a three-state mark rather than a tick: it
+    // came back (✓), it failed but the last snapshot covers it (↺), or it failed
+    // and that section is now empty (✗). A ✓ should only ever mean fresh.
+    noteFail("on/off", errors.onOff, teamName);
+    noteFail("lineups", errors.lineups, teamName);
+    // (a completed season back-fills without marking anything stale — its old
+    // numbers are simply the right ones — so ask the bundle, not just `stale`.)
+    const mark = (key) => (!errors[key] ? "✓" : isEmpty(bundle[key]) ? "✗" : "↺");
+
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
-    const carried = Object.keys(stale);
+    // onOff/lineups already say their own state above, so the kept-list covers
+    // the rest (roster, playerAdv, shot zones, upcoming).
+    const carried = Object.keys(stale).filter((k) => k !== "onOff" && k !== "lineups");
     const flags = [
       plural(bundle.games.length, "game"),
       plural(bundle.roster.length, "player"),
       `${bundle.upcoming.length} upcoming`,
-      errors.onOff && !stale.onOff ? "on/off ✗" : "on/off ✓",
-      errors.lineups && !stale.lineups ? "lineups ✗" : "lineups ✓",
+      `on/off ${mark("onOff")}`,
+      `lineups ${mark("lineups")}`,
     ];
     if (carried.length) flags.push(`↺ kept ${carried.join(", ")}`);
-    console.log(flags.join(" · "));
+    done(flags.join(" · "));
   }
 
   teams.sort((a, b) => a.name.localeCompare(b.name));
@@ -824,36 +1038,64 @@ async function main() {
     carryOver(league, prev, ["teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"], {
       prevAt,
       prevStale: (prev && prev.stale) || {},
+      expired, final,
       errors: {
         teamProfiles: playerLogErr,
         leagueShotZones: errLeague.teamShotZones,
         positionShotZones: errLeague.playerShotZones,
         teamZoneWins: errLeague.teamShotZones,
       },
-      expired,
     })
   );
 
   const payload = {
-    meta: { generatedAt: new Date().toISOString(), season: SEASON },
+    meta: { generatedAt: new Date().toISOString(), season, final: Boolean(final) },
     teams,
     ...league,
     stale: leagueStale,
     data,
   };
 
-  await mkdir(dirname(OUT_PATH), { recursive: true });
-  await writeFile(OUT_PATH, JSON.stringify(payload));
+  console.log("");
+  begin(`Writing ${join(outDir, String(season))} … `);
+  const entry = await writeSeason(outDir, payload);
+  done(`${teams.length} teams, ${entry.games} games — season done in ${elapsed(startedAt)}`);
 
-  console.log(`\nWrote ${OUT_PATH}`);
-  console.log(`  ${teams.length} teams`);
-  const leagueFails = Object.keys(errLeague);
-  if (leagueFails.length) {
-    console.log(`  league-wide requests that failed: ${leagueFails.join(", ")}`);
+  // ----- what failed -----
+  // stats.wnba.com fails a request or two most nights, and until now the only
+  // trace was a FAILED scrolled far up the run. Collected here instead: one line
+  // per broken request with the reason it gave, and for the per-team ones, which
+  // teams it broke for. What the site actually shows as a result is the
+  // carried-over / not-kept lines below.
+  const named = (list, cap = 6) =>
+    list.length > cap ? `${list.slice(0, cap).join(", ")} +${list.length - cap} more` : list.join(", ");
+
+  const failures = [];
+  for (const [label, message] of [
+    ["player game log", playerLogErr],
+    ["schedule", scheduleErr],
+    ...Object.entries(errLeague),
+  ]) {
+    if (message) failures.push(`  • ${label} (league-wide) … ${message}`);
   }
+  for (const f of teamFails.values()) {
+    failures.push(
+      `  • ${f.label} … ${f.message} — ${f.teams.length} of ${teams.length} teams: ${named(f.teams)}`
+    );
+  }
+
+  if (failures.length) {
+    console.log(`\n  ${failures.length} failed request${failures.length === 1 ? "" : "s"} for ${season}:`);
+    for (const line of failures) console.log(line);
+  } else {
+    console.log(`\n  No failures — every ${season} request answered.`);
+  }
+
   const leagueCarried = Object.keys(leagueStale);
   const teamsCarried = Object.values(data).filter((b) => b.stale).length;
-  if (leagueCarried.length || teamsCarried) {
+  if (final && prev) {
+    console.log(`  (completed season — anything the API didn't return was taken from the earlier fetch)`);
+  } else if (leagueCarried.length || teamsCarried) {
     console.log(
       `  kept from ${prevAt}: ${leagueCarried.length ? leagueCarried.join(", ") : "no league-wide sets"}` +
         `${teamsCarried ? ` · per-team sets for ${teamsCarried} of ${teams.length} teams` : ""}`
@@ -866,11 +1108,141 @@ async function main() {
         ` — those sections now show as unavailable`
     );
   }
+  if (entry.missing) {
+    console.log(`  ${entry.missing} dataset${entry.missing === 1 ? "" : "s"} still missing — retry with: npm run fetch -- --repair`);
+  }
+  return { ...entry, failed: failures.length };
+}
+
+// ----- CLI -------------------------------------------------------------------
+
+/**
+ * Season selectors, in the forms the usage note advertises:
+ *   "2019"            one season
+ *   "17-19" / "2017-2019"   an inclusive range (two-digit years allowed)
+ *   "2017,2019,2024"  an explicit list (what a failed run prints to retry)
+ */
+function parseSeasonRange(text) {
+  if (text == null) throw new Error("--season/--seasons needs a year, range or list after it.");
+  const full = (y) => (Number(y) < 100 ? 2000 + Number(y) : Number(y));
+  const out = new Set();
+  for (const part of String(text).split(",").map((x) => x.trim()).filter(Boolean)) {
+    const [a, b] = part.split(/[-–:]/).map((x) => full(x.trim()));
+    if (!Number.isFinite(a)) throw new Error(`Not a season or range: "${part}"`);
+    const to = Number.isFinite(b) ? b : a;
+    const [lo, hi] = a <= to ? [a, to] : [to, a];
+    for (let y = lo; y <= hi; y++) out.add(y);
+  }
+  if (!out.size) throw new Error(`No seasons in "${text}".`);
+  return [...out].sort((a, b) => a - b);
+}
+
+function parseArgs(argv) {
+  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--season" || arg === "--seasons") {
+      opts.seasons = parseSeasonRange(argv[++i]);
+      opts.mode = "explicit";
+    } else if (arg === "--missing") {
+      opts.mode = "missing";
+    } else if (arg === "--repair") {
+      opts.mode = "repair";
+    } else if (arg === "--out") {
+      opts.outDir = argv[++i];
+    } else if (arg === "--all") {
+      opts.seasons = parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
+      opts.mode = "explicit";
+    } else {
+      throw new Error(`Unknown argument "${arg}". See the usage note at the top of this file.`);
+    }
+  }
+  return opts;
+}
+
+/**
+ * Which seasons this run should actually fetch. Completed seasons are expensive
+ * (~45 requests each) and never change, so --missing and --repair exist to fetch
+ * only what's absent or broken rather than redoing the archive every time.
+ */
+async function planSeasons(opts) {
+  const index = await readIndex(opts.outDir);
+  const known = new Map(index.seasons.map((s) => [Number(s.season), s]));
+  const range = () => parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
+
+  if (opts.mode === "explicit") return opts.seasons;
+  if (opts.mode === "current") return [CURRENT_SEASON];
+  if (opts.mode === "missing") return range().filter((y) => !known.has(y));
+  // repair: seasons we have but that still have holes in them, plus any missing
+  return range().filter((y) => !known.has(y) || (known.get(y).missing || 0) > 0);
+}
+
+async function readIndex(dir) {
+  try {
+    const index = JSON.parse(await readFile(indexPath(dir), "utf8"));
+    if (index && Array.isArray(index.seasons)) return index;
+  } catch (_) { /* no index yet */ }
+  return { currentSeason: CURRENT_SEASON, seasons: [] };
+}
+
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  const seasons = await planSeasons(opts);
+
+  console.log(`\nWNBA Analytics — fetching from stats.wnba.com`);
+  if (!seasons.length) {
+    console.log(`\nNothing to do: every season from ${OLDEST_SEASON} to ${CURRENT_SEASON} is already complete.\n`);
+    return;
+  }
+  console.log(`Seasons: ${seasons.join(", ")}  →  ${opts.outDir}`);
+
+  const runStartedAt = Date.now();
+  const failures = [];
+  const degraded = []; // seasons that were written, but with requests that failed
+  for (const [i, season] of seasons.entries()) {
+    // Only the season in progress can change; everything before it is history.
+    const final = season < CURRENT_SEASON;
+    try {
+      const entry = await fetchSeason(season, { outDir: opts.outDir, final, nth: i + 1, of: seasons.length });
+      if (entry.failed) degraded.push({ season, failed: entry.failed, missing: entry.missing });
+    } catch (e) {
+      // One bad season must not abandon the rest of a 10-season backfill.
+      abandon(); // whichever step threw still has its line open
+      failures.push({ season, message: e.message });
+      console.error(`\n  ${season} FAILED — ${e.message}`);
+      console.error(`  Nothing was written for ${season}; any existing files for it are untouched.`);
+    }
+  }
+
+  console.log(`\n${"─".repeat(64)}`);
+  const written = seasons.length - failures.length;
+  console.log(`Done: ${written} of ${seasons.length} season${seasons.length === 1 ? "" : "s"} written in ${elapsed(runStartedAt)}.`);
+  if (failures.length) {
+    for (const f of failures) console.log(`  ${f.season}: ${f.message}`);
+    console.log(`Retry those with: npm run fetch -- --seasons ${failures.map((f) => f.season).join(",")}`);
+    process.exitCode = 1;
+  }
+  // A season can be written and still be missing pieces, which the per-season
+  // detail above spells out — this is the "did anything go wrong tonight?" line,
+  // so it survives however far the log has scrolled.
+  if (degraded.length) {
+    for (const d of degraded) {
+      console.log(
+        `  ${d.season}: ${d.failed} failed request${d.failed === 1 ? "" : "s"}` +
+          (d.missing ? ` · ${d.missing} dataset${d.missing === 1 ? "" : "s"} unavailable` : " · every section still filled")
+      );
+    }
+    if (degraded.some((d) => d.missing)) {
+      console.log(`Retry the gaps with: npm run fetch -- --repair`);
+    }
+  } else if (!failures.length) {
+    console.log(`Every request answered — no failures.`);
+  }
   console.log("");
 }
 
 main().catch((e) => {
-  console.error(`\nFatal: ${e.message}`);
-  console.error(`Nothing was written — the existing snapshot at ${OUT_PATH} is untouched, so the site keeps serving it.\n`);
+  abandon();
+  console.error(`\nFatal: ${e.message}\n`);
   process.exit(1);
 });

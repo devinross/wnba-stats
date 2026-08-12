@@ -22,12 +22,14 @@ export function positionLabel(pos) {
 
 /**
  * Metadata for one route.
- *   { team, tab, player, season, path }
+ *   { team, tab, player, season, path, archive }
  * `player` is the roster entry (for the player pages), `path` the canonical
- * pathname from routes.js. Titles are kept near 60 characters and descriptions
- * near 155 so neither gets truncated in results.
+ * pathname from routes.js, and `archive` marks a season that has finished — its
+ * landing page is about that year rather than about the league today. Titles
+ * are kept near 60 characters and descriptions near 155 so neither gets
+ * truncated in results.
  */
-export function pageMeta({ team, tab, player, season, path = "/" }) {
+export function pageMeta({ team, tab, player, season, path = "/", archive = false }) {
   const yr = season ? `${season} ` : "";
   const canonical = SITE_URL + (path === "/" ? "/" : path);
 
@@ -51,6 +53,19 @@ export function pageMeta({ team, tab, player, season, path = "/" }) {
         `${team.name} ${yr}team stats: shot-zone charts vs the WNBA average, four factors, ` +
         `lineup net ratings, on/off impact and league-wide rankings.`,
       ogTitle: `${team.name} ${yr}stats`,
+    };
+  }
+
+  // A finished season's landing page is a different page from the live one, and
+  // has to say so or the two compete for the same query.
+  if (archive && season) {
+    return {
+      canonical,
+      title: `${season} WNBA Stats — Every Team's Season`,
+      description:
+        `The complete ${season} WNBA season: team shot-zone charts, four factors, lineup net ` +
+        `ratings, on/off impact, league rankings and every player's game log.`,
+      ogTitle: `${season} WNBA season stats`,
     };
   }
 

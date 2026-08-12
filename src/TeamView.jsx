@@ -8,6 +8,8 @@ import {
 import OnOffChart from "./OnOffChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import StaleNote from "./StaleNote.jsx";
+import SourceNote from "./SourceNote.jsx";
+import { sourceFor } from "./sources.js";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -127,7 +129,7 @@ function PlayerLink({ name, href, onGo }) {
   );
 }
 
-function Section({ title, hint, stale, children, style }) {
+function Section({ title, hint, stale, source, children, style }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22, ...style }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -136,6 +138,7 @@ function Section({ title, hint, stale, children, style }) {
       </div>
       <StaleNote stale={stale} />
       {children}
+      <SourceNote source={source} />
     </section>
   );
 }
@@ -302,7 +305,14 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, leagueShotZones = [], teamZoneWins = [], playerHref, onPlayer }) {
+  // Footnote links back to the wnba.com page each section was built from, so
+  // any number here can be checked against the source it came from.
+  const src = useMemo(
+    () => (key) => sourceFor(key, { season, teamId }),
+    [season, teamId]
+  );
+
   const team = useMemo(() => {
     const gp = games.length;
     const wins = games.filter((g) => g.w).length;
@@ -506,7 +516,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </div>
 
       {/* Margin by game */}
-      <Section title="Margin by game" hint="green = win · red = loss">
+      <Section title="Margin by game" hint="green = win · red = loss" source={src("games")}>
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
             <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" vertical={false} />
@@ -527,6 +537,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       <Section
         title="Points scored vs allowed"
         hint={<span><span style={{ color: C.BRAND }}>● scored</span>{"  "}<span style={{ color: C.ACCENT }}>● allowed</span></span>}
+        source={src("games")}
       >
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -570,6 +581,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             <span>3P {shooting.tpm}/{shooting.tpa}</span><span>·</span>
             <span>FT {shooting.ftm}/{shooting.fta}</span>
           </div>
+          <SourceNote source={src("teamShooting")} />
         </section>
 
         {/* Scoring share */}
@@ -591,11 +603,12 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
               </div>
             </div>
           ))}
+          <SourceNote source={src("scoringShare")} />
         </section>
       </div>
 
       {/* Shooting by zone — court map + numbers */}
-      <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume" stale={stale.shotZones}>
+      <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume" stale={stale.shotZones} source={src("teamShotZones")}>
         {shotZones ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 22, alignItems: "start" }}>
             <CourtChart zones={shotZones} league={leagueShotZones} />
@@ -614,7 +627,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* League ranking — selected team vs all WNBA teams */}
-      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · plum = ${teamName}`} stale={stale.teamRanks}>
+      <Section title={`${teamName} vs the WNBA · net rating`} hint={`points per 100 possessions · plum = ${teamName}`} stale={stale.teamRanks} source={src("teamRanks")}>
         {ranking ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginBottom: 16 }}>
@@ -648,6 +661,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         title={`${teamName} profile · vs the WNBA`}
         hint={`per 100 possessions · plum = ${teamName}`}
         stale={stale.teamProfiles}
+        source={src("teamProfiles")}
       >
         {profile ? (
           <>
@@ -698,6 +712,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         title={`Four factors · ${teamName} vs opponents`}
         hint={<span><span style={{ color: C.BRAND }}>● {teamName}</span>{"  "}<span style={{ color: C.ACCENT }}>● opponents</span></span>}
         stale={stale.fourFactors}
+        source={src("fourFactors")}
       >
         {ffData ? (
           <>
@@ -722,10 +737,10 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* On/off impact (moved from the player view) */}
-      <OnOffChart onOff={onOff} stale={stale.onOff} />
+      <OnOffChart onOff={onOff} stale={stale.onOff} source={src("onOff")} />
 
       {/* Advanced player stats */}
-      <Section title="Advanced player profile · usage vs efficiency" hint="dot size = minutes · color = net rating" stale={stale.playerAdv}>
+      <Section title="Advanced player profile · usage vs efficiency" hint="dot size = minutes · color = net rating" stale={stale.playerAdv} source={src("playerAdv")}>
         {advScatter.length ? (
           <>
             <ResponsiveContainer width="100%" height={340}>
@@ -777,7 +792,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       </Section>
 
       {/* Lineups */}
-      <Section title="Most-used lineups" hint="top 8 by minutes · net = points per 100 possessions" stale={stale.lineups}>
+      <Section title="Most-used lineups" hint="top 8 by minutes · net = points per 100 possessions" stale={stale.lineups} source={src("lineups")}>
         {lineups && lineups.length ? (
           lineups.map((l, i) => {
             const w = Math.min(50, (Math.abs(l.net) / maxAbsNet) * 50);
@@ -805,7 +820,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
       {/* Upcoming games */}
       {(upcoming.length > 0 || errors.schedule) && (
-        <Section title="Upcoming games" stale={stale.upcoming}>
+        <Section title="Upcoming games" stale={stale.upcoming} source={src("upcoming")}>
           {upcoming.length > 0 ? (
             <div className="scroll-x" style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 460 }}>
@@ -841,7 +856,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       )}
 
       {/* Results table */}
-      <Section title="Results">
+      <Section title="Results" source={src("games")}>
         <div className="scroll-x" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
             <thead>
@@ -879,6 +894,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         title="Shooting profile vs winning"
         hint={`each dot = a team · plum = ${teamName}`}
         stale={stale.teamZoneWins}
+        source={src("teamZoneWins")}
       >
         {winScatter.pts.length ? (
           <>

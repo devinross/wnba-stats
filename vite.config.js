@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The app reads a static data file (public/data/wnba.json) produced by
-// `npm run fetch`, so there is no dev/prod proxy to stats.wnba.com.
+// The app reads static data files (public/data/index.json and one folder per
+// season) produced by `npm run fetch`, so there is no dev/prod proxy to
+// stats.wnba.com.
 //
 // `base: "/"` (not "./") is required: the site prerenders a page per team and
-// player, so HTML is served from nested paths like /team/atlanta-dream/. A
+// player, so HTML is served from nested paths like /2019/team/atlanta-dream/. A
 // relative asset URL on that page would resolve to
 // /team/atlanta-dream/assets/…, which doesn't exist. Root-absolute URLs resolve
 // the same from every depth.

@@ -5,6 +5,8 @@ import {
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
 } from "recharts";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
+import SourceNote from "./SourceNote.jsx";
+import { sourceFor } from "./sources.js";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -54,7 +56,12 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null, playerHref }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], positionShotZones = null, playerHref, season, teamId }) {
+  // Same footnote links as the Team tab — see src/sources.js.
+  const seasonSource = sourceFor("roster", { season, teamId });
+  const logSource = sourceFor("playerLog", { season, teamId });
+  const zoneSource = sourceFor("playerShotZones", { season, teamId });
+
   const player = roster[sel] || roster[0];
   const agg = useMemo(() => aggregate(player), [sel, roster]);
 
@@ -167,6 +174,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <span>3P {agg.tpm}/{agg.tpa}</span><span>·</span>
                 <span>FT {agg.ftm}/{agg.fta}</span>
               </div>
+              <SourceNote source={seasonSource} />
             </section>
 
             <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
@@ -192,6 +200,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                   <Area type="monotone" dataKey="pts" stroke={C.BRAND} strokeWidth={2.5} fill="url(#pg)" dot={{ r: 3, fill: C.BRAND }} activeDot={{ r: 5 }} />
                 </AreaChart>
               </ResponsiveContainer>
+              <SourceNote source={logSource} />
             </section>
           </div>
 
@@ -212,6 +221,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
             ) : (
               <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No zone shooting data for this player yet.</p>
             )}
+            <SourceNote source={zoneSource} />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
@@ -228,6 +238,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <Line type="monotone" dataKey="ts" stroke={C.ACCENT} strokeWidth={2.5} dot={{ r: 3, fill: C.ACCENT }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>
+            <SourceNote source={logSource} />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
@@ -271,6 +282,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 </tbody>
               </table>
             </div>
+            <SourceNote source={logSource} />
           </section>
         </main>
       </div>

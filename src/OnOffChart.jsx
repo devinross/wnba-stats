@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import StaleNote from "./StaleNote.jsx";
+import SourceNote from "./SourceNote.jsx";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer,
@@ -48,7 +49,7 @@ function CustomTooltip({ active, payload }) {
   );
 }
 
-export default function OnOffChart({ onOff, selectedName, stale }) {
+export default function OnOffChart({ onOff, selectedName, stale, source }) {
   const data = useMemo(
     () =>
       (onOff || [])
@@ -124,6 +125,7 @@ export default function OnOffChart({ onOff, selectedName, stale }) {
           </ScatterChart>
         </ResponsiveContainer>
       </div>
+      <SourceNote source={source} />
     </section>
   );
 }

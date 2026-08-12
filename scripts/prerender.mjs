@@ -1,21 +1,26 @@
 // ---------------------------------------------------------------------------
-// Prerender: one HTML file per route.
+// Prerender: one HTML file per route, for every season.
 //
 // The app is client-rendered, so `vite build` emits a single index.html whose
 // body is `<div id="root"></div>`. That gives search engines exactly one URL to
-// index and no content to read on it. This script turns the build into ~254
-// real pages — the league landing, one per team, one per player — each with:
+// index and no content to read on it. This script turns the build into real
+// pages — the league landing, one per team, one per player — each with:
 //
 //   * its own <title>, description, canonical and Open Graph tags
 //     (from src/pageMeta.js, the same module the running app uses when you
 //     navigate client-side, so the two can't drift)
 //   * a static content shell of that entity's actual numbers, built from the
-//     same public/data/wnba.json the app fetches at runtime. React replaces it
-//     on mount, so it's on screen for a frame — but it means a crawler that
+//     same public/data files the app fetches at runtime. React replaces it on
+//     mount, so it's on screen for a frame — but it means a crawler that
 //     doesn't execute JavaScript still gets the page's substance, and links to
 //     follow to the other pages.
 //   * JSON-LD describing what the page is (SportsTeam / Person / Dataset) plus
 //     a breadcrumb trail.
+//
+// The current season gets the full treatment (landing + team + player pages).
+// Completed seasons get their landing and team pages only: another ~250 player
+// pages per archived year would multiply the build for little crawl value, and
+// those URLs still work — they just render client-side.
 //
 // It also writes dist/sitemap.xml listing every route.
 //
@@ -27,7 +32,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { teamSlug, rosterSlugs, allRoutes } from "../src/routes.js";
+import { teamSlug, seasonPrefix, seasonRoutes } from "../src/routes.js";
 import { pageMeta, positionLabel, SITE_URL, OG_IMAGE } from "../src/pageMeta.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,21 +48,45 @@ const r1 = (n) => Math.round(n * 10) / 10;
 const pct = (m, a) => (a > 0 ? r1((m / a) * 100) : 0);
 const sum = (arr, k) => arr.reduce((a, b) => a + (b[k] || 0), 0);
 
-const league = JSON.parse(readFileSync(resolve(root, "public/data/wnba.json"), "utf8"));
 const template = readFileSync(templatePath, "utf8");
+const dataDir = resolve(root, "public/data");
 
-const season = league.meta?.season ?? new Date().getFullYear();
-const updatedISO = league.meta?.generatedAt || new Date().toISOString();
-const updatedHuman = new Date(updatedISO).toLocaleDateString("en-US", {
-  month: "long",
-  day: "numeric",
-  year: "numeric",
-});
+const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
-if (!league.teams?.length) {
-  console.error("prerender: wnba.json has no teams — refusing to overwrite the build with empty pages.");
+/**
+ * Reassemble one season from its split files — league.json plus every
+ * teams/<id>.json — back into the single object the page builders below read.
+ * The split exists to keep the browser's downloads small; at build time we're
+ * on local disk and want the whole thing.
+ */
+function readSeason(season) {
+  const league = readJson(resolve(dataDir, String(season), "league.json"));
+  league.data = {};
+  for (const team of league.teams) {
+    try {
+      league.data[team.id] = readJson(resolve(dataDir, String(season), "teams", `${team.id}.json`));
+    } catch (_) {
+      league.data[team.id] = {};
+    }
+  }
+  return league;
+}
+
+const index = readJson(resolve(dataDir, "index.json"));
+const currentSeason = index.currentSeason;
+if (!index.seasons?.length) {
+  console.error("prerender: data/index.json lists no seasons — run `npm run fetch` first.");
   process.exit(1);
 }
+
+// Module-level state for the page builders: set once per season by renderSeason.
+let league = null;
+let season = currentSeason;
+let updatedISO = new Date().toISOString();
+let updatedHuman = "";
+let isArchive = false;
+const humanDate = (iso) =>
+  new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
 // --- stat rollups, mirroring what the app computes ------------------------
 
@@ -127,11 +156,23 @@ function playerSummary(player) {
 // Plain semantic HTML with real links. No styling: it is replaced on mount, and
 // every byte here is a byte a crawler has to read past.
 
+const prefix = () => seasonPrefix(season, currentSeason);
+const teamPathOf = (team) => `${prefix()}/team/${teamSlug(team)}`;
+const homePath = () => prefix() || "/";
+
 function homeShell() {
   const teamLinks = league.teams
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((t) => `<li><a href="/team/${teamSlug(t)}">${esc(t.name)} stats</a></li>`)
+    .map((t) => `<li><a href="${teamPathOf(t)}">${esc(t.name)} stats</a></li>`)
+    .join("");
+  const seasonLinks = index.seasons
+    .map((s) => {
+      const path = seasonPrefix(s.season, currentSeason) || "/";
+      return path === homePath()
+        ? `<li>${s.season}</li>`
+        : `<li><a href="${path}">${s.season} WNBA stats</a></li>`;
+    })
     .join("");
   return `<h1>${season} WNBA Stats</h1>
       <p>Team and player analytics for all ${league.teams.length} WNBA teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
@@ -146,6 +187,8 @@ function homeShell() {
       </ul>
       <h2>Teams</h2>
       <ul>${teamLinks}</ul>
+      <h2>Other seasons</h2>
+      <ul>${seasonLinks}</ul>
       <p><a href="${PARENT_URL}">Highlight Factory</a> is the modern basketball film tool, powered with AI.</p>`;
 }
 
@@ -153,12 +196,12 @@ function teamShell(team) {
   const s = teamSummary(team);
   const b = league.data[team.id] || {};
   const roster = b.roster || [];
-  const slugs = rosterSlugs(roster);
+  const slugs = (team.players || []).map((p) => p.slug);
   const playerLinks = roster
     .map((p, i) => {
       const ps = playerSummary(p);
       const detail = ps ? ` — ${ps.ppg} ppg, ${ps.rpg} rpg, ${ps.apg} apg in ${ps.gp} games` : "";
-      return `<li><a href="/team/${teamSlug(team)}/${slugs[i]}">${esc(p.name)}</a>${p.num ? ` #${esc(p.num)}` : ""}${p.pos ? `, ${esc(p.pos)}` : ""}${esc(detail)}</li>`;
+      return `<li><a href="${teamPathOf(team)}/${slugs[i]}">${esc(p.name)}</a>${p.num ? ` #${esc(p.num)}` : ""}${p.pos ? `, ${esc(p.pos)}` : ""}${esc(detail)}</li>`;
     })
     .join("");
 
@@ -183,17 +226,17 @@ function teamShell(team) {
       <ul>${playerLinks}</ul>
       <h2>Also on this page</h2>
       <p>Shot-zone charts shaded against the WNBA average, four factors versus opponents, most-used lineups by net rating, on/off player impact, and where the ${esc(team.teamName)} rank league-wide.</p>
-      <p><a href="/">All WNBA teams</a></p>`;
+      <p><a href="${homePath()}">All WNBA teams, ${season}</a></p>`;
 }
 
 function playerShell(team, player) {
   const s = playerSummary(player);
   const role = positionLabel(player.pos);
-  const teamPath = `/team/${teamSlug(team)}`;
+  const teamPath = teamPathOf(team);
   if (!s) {
     return `<h1>${esc(player.name)}</h1>
       <p>${esc(player.name)} has not logged a game for the <a href="${teamPath}">${esc(team.name)}</a> in the ${season} season yet.</p>
-      <p><a href="/">All WNBA teams</a></p>`;
+      <p><a href="${homePath()}">All WNBA teams</a></p>`;
   }
   return `<h1>${esc(player.name)} ${season} Stats</h1>
       <p>${esc(player.name)}${player.num ? `, #${esc(player.num)}` : ""}${role ? `, ${role}` : ""} for the <a href="${teamPath}">${esc(team.name)}</a>. ${s.ppg} points, ${s.rpg} rebounds and ${s.apg} assists per game in ${s.gp} games this season, averaging ${s.mpg} minutes. Updated ${esc(updatedHuman)}.</p>
@@ -216,7 +259,7 @@ function playerShell(team, player) {
       </ul>
       <h2>Also on this page</h2>
       <p>Full game log, points-by-game and true-shooting trends, and a shot-zone breakdown compared with other WNBA ${role ? `${role}s` : "players"}.</p>
-      <p><a href="${teamPath}">${esc(team.name)} team stats</a> · <a href="/">All WNBA teams</a></p>`;
+      <p><a href="${teamPath}">${esc(team.name)} team stats</a> · <a href="${homePath()}">All WNBA teams</a></p>`;
 }
 
 // --- JSON-LD ---------------------------------------------------------------
@@ -257,8 +300,8 @@ function jsonLdFor({ team, player, path }) {
           url: SITE_URL + path,
         },
         breadcrumbs([
-          { name: "WNBA Stats", path: "/" },
-          { name: team.name, path: `/team/${teamSlug(team)}` },
+          { name: `${season} WNBA Stats`, path: homePath() },
+          { name: team.name, path: teamPathOf(team) },
           { name: player.name, path },
         ]),
       ],
@@ -282,7 +325,7 @@ function jsonLdFor({ team, player, path }) {
           ...(s.gp ? { description: `${team.name} ${season} season: ${s.wins}-${s.losses}, ${s.ppg} points per game.` } : {}),
         },
         breadcrumbs([
-          { name: "WNBA Stats", path: "/" },
+          { name: `${season} WNBA Stats`, path: homePath() },
           { name: team.name, path },
         ]),
       ],
@@ -304,7 +347,7 @@ function jsonLdFor({ team, player, path }) {
       },
       {
         "@type": "Dataset",
-        "@id": `${SITE_URL}/#dataset`,
+        "@id": `${SITE_URL}${homePath()}#dataset`,
         name: `${season} WNBA team and player analytics`,
         description:
           "Per-team and per-player WNBA statistics including shot-zone efficiency and volume, four factors, lineup net ratings, on/off splits and league-wide team ratings.",
@@ -318,7 +361,7 @@ function jsonLdFor({ team, player, path }) {
         distribution: {
           "@type": "DataDownload",
           encodingFormat: "application/json",
-          contentUrl: `${SITE_URL}/data/wnba.json`,
+          contentUrl: `${SITE_URL}/data/${season}/league.json`,
         },
       },
     ],
@@ -339,7 +382,7 @@ function replaceOnce(html, pattern, replacement, label) {
 }
 
 function buildPage({ team, player, path, tab }) {
-  const meta = pageMeta({ team, tab, player, season, path });
+  const meta = pageMeta({ team, tab, player, season, path, archive: isArchive });
   let html = template;
 
   html = replaceOnce(html, /<title>[\s\S]*?<\/title>/, `<title>${esc(meta.title)}</title>`, "<title>");
@@ -404,36 +447,76 @@ function writePage(path, html) {
 
 // --- run -------------------------------------------------------------------
 
-let count = 0;
-writePage("/", buildPage({ path: "/" }));
-count++;
+// Newest season first, so the sitemap leads with the pages that matter most.
+const seasonList = index.seasons.map((s) => Number(s.season)).sort((a, b) => b - a);
 
-for (const team of league.teams) {
-  const tPath = `/team/${teamSlug(team)}`;
-  writePage(tPath, buildPage({ team, path: tPath, tab: "team" }));
+let count = 0;
+const routes = [];
+
+function renderSeason(year) {
+  league = readSeason(year);
+  season = league.meta?.season ?? year;
+  updatedISO = league.meta?.generatedAt || new Date().toISOString();
+  updatedHuman = humanDate(updatedISO);
+  isArchive = Number(season) !== Number(currentSeason);
+
+  if (!league.teams?.length) {
+    console.error(`prerender: ${year} has no teams — refusing to write empty pages for it.`);
+    process.exit(1);
+  }
+
+  // Only the live season is worth ~250 player pages; see the note at the top.
+  const withPlayers = !isArchive;
+
+  writePage(homePath(), buildPage({ path: homePath() }));
   count++;
 
-  const roster = (league.data[team.id] || {}).roster || [];
-  const slugs = rosterSlugs(roster);
-  roster.forEach((player, i) => {
-    const pPath = `${tPath}/${slugs[i]}`;
-    writePage(pPath, buildPage({ team, player, path: pPath, tab: "players" }));
+  for (const team of league.teams) {
+    const tPath = teamPathOf(team);
+    writePage(tPath, buildPage({ team, path: tPath, tab: "team" }));
     count++;
-  });
+
+    if (!withPlayers) continue;
+    const roster = (league.data[team.id] || {}).roster || [];
+    const slugs = (team.players || []).map((p) => p.slug);
+    roster.forEach((player, i) => {
+      const pPath = `${tPath}/${slugs[i]}`;
+      writePage(pPath, buildPage({ team, player, path: pPath, tab: "players" }));
+      count++;
+    });
+  }
+
+  routes.push(...seasonRoutes(league, currentSeason, { players: withPlayers }));
+  return { year: season, teams: league.teams.length, archive: isArchive };
 }
+
+const rendered = seasonList.map(renderSeason);
 
 // --- sitemap ---------------------------------------------------------------
 
-const routes = allRoutes(league);
-const lastmod = updatedISO.slice(0, 10);
+// The live season changes nightly; a finished one never will again.
+const lastmodFor = (route) => {
+  const match = /^\/(\d{4})(\/|$)/.exec(route);
+  const year = match ? Number(match[1]) : currentSeason;
+  const entry = index.seasons.find((s) => Number(s.season) === year);
+  return (entry?.generatedAt || updatedISO).slice(0, 10);
+};
+const changefreqFor = (route) => (/^\/\d{4}(\/|$)/.test(route) ? "yearly" : "daily");
+const priorityFor = (route) => {
+  const archive = /^\/\d{4}(\/|$)/.test(route);
+  const depth = route.split("/").filter(Boolean).length;
+  if (route === "/") return "1.0";
+  if (archive) return depth <= 1 ? "0.6" : "0.4";
+  return depth === 2 ? "0.8" : "0.6";
+};
+
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${routes
   .map(
     (r) =>
-      `  <url><loc>${SITE_URL}${r === "/" ? "/" : r}</loc><lastmod>${lastmod}</lastmod><changefreq>daily</changefreq><priority>${
-        r === "/" ? "1.0" : r.split("/").length === 3 ? "0.8" : "0.6"
-      }</priority></url>`
+      `  <url><loc>${SITE_URL}${r === "/" ? "/" : r}</loc><lastmod>${lastmodFor(r)}</lastmod>` +
+      `<changefreq>${changefreqFor(r)}</changefreq><priority>${priorityFor(r)}</priority></url>`
   )
   .join("\n")}
 </urlset>
@@ -445,7 +528,9 @@ if (routes.length !== count) {
   process.exit(1);
 }
 
+const live = rendered.find((r) => !r.archive);
 console.log(
-  `prerender: ${count} pages (1 landing, ${league.teams.length} teams, ${count - league.teams.length - 1} players) ` +
-    `+ sitemap.xml — ${season} season, updated ${updatedHuman}`
+  `prerender: ${count} pages across ${rendered.length} seasons + sitemap.xml — ` +
+    `${live ? `${live.year} in full (${live.teams} teams, players included)` : "no live season"}, ` +
+    `${rendered.filter((r) => r.archive).map((r) => r.year).join(", ") || "no"} archived (team pages only)`
 );

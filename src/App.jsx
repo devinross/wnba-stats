@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { C, FONT_DISPLAY } from "./palette";
 import { SITE, NAV_LINKS } from "./config.js";
-import { resolveRoute, buildPath, rosterSlugs } from "./routes.js";
+import { parsePath, resolveInSeason, buildPath, teamSlug } from "./routes.js";
 import { pageMeta, applyHead } from "./pageMeta.js";
 import BrandMark from "./BrandMark.jsx";
 import TeamBadge from "./TeamBadge.jsx";
-import { useLeagueData } from "./useLeagueData";
+import { useSeasonIndex, useSeason, useTeam } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
 import StaleNote from "./StaleNote.jsx";
@@ -225,11 +225,60 @@ function SiteHeader() {
   );
 }
 
+// Season switcher. Same trick as TeamPicker — the visible label is text sized
+// to the current value, with a transparent native <select> laid over it, so the
+// capsule stays narrow instead of sizing to the longest option and the control
+// keeps real keyboard and screen-reader behaviour.
+function SeasonPicker({ season, seasons, onChange, loading }) {
+  if (!seasons || seasons.length < 2) return null;
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        border: `1px solid ${C.LINE}`,
+        borderRadius: 999,
+        padding: "7px 14px",
+        background: C.PANEL,
+      }}
+    >
+      <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.MUTE, fontWeight: 700 }}>
+        Season
+      </span>
+      <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, lineHeight: 1, opacity: loading ? 0.5 : 1 }}>
+        {season}
+      </span>
+      <span aria-hidden="true" style={{ color: C.BRAND, fontSize: 12, lineHeight: 1 }}>▾</span>
+      <select
+        value={season}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label="Select season"
+        style={{
+          position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0,
+          appearance: "none", WebkitAppearance: "none", border: "none",
+          background: "transparent", cursor: "pointer",
+        }}
+      >
+        {seasons.map((s) => (
+          <option key={s.season} value={s.season} style={{ color: "#111", fontWeight: 600 }}>
+            {s.season}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 // The team context strip under the site header: which team you're looking at,
-// and its headline record.
-function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season }) {
+// which season, and its headline record.
+function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season, seasons, currentSeason, onPickSeason, seasonLoading, loading }) {
   const teamW = games.filter((g) => g.w).length;
   const teamL = games.length - teamW;
+  // Record and games are the selected team's, which arrives after the season
+  // does — show a placeholder rather than a confident 0–0.
+  const stat = (value) => (loading ? "—" : value);
   return (
     <div
       className="hf-container"
@@ -248,6 +297,7 @@ function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season }) {
         <div>
           <div className="hf-eyebrow" style={{ fontSize: 10, marginBottom: 2 }}>
             {season ? `${season} ` : ""}WNBA Analytics
+            {season && currentSeason && Number(season) !== Number(currentSeason) ? " · final" : ""}
           </div>
           <TeamPicker teams={teams} value={teamId} onChange={onPick} season={season} />
           <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
@@ -258,18 +308,23 @@ function TeamBar({ team, teams, teamId, onPick, tab, games, updated, season }) {
           </div>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+        <SeasonPicker season={season} seasons={seasons} onChange={onPickSeason} loading={seasonLoading} />
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Record</div>
           <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>
-            {teamW}
-            <span style={{ color: C.MUTE }}>–</span>
-            {teamL}
+            {stat(
+              <>
+                {teamW}
+                <span style={{ color: C.MUTE }}>–</span>
+                {teamL}
+              </>
+            )}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Games</div>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{games.length}</div>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{stat(games.length)}</div>
         </div>
       </div>
     </div>
@@ -298,7 +353,7 @@ function FooterCol({ title, links }) {
 // Every team, linked, on every page. The team switcher is a <select>, which a
 // crawler can't follow, so without this the team pages would only be reachable
 // from the sitemap — and nothing would pass authority between them.
-function TeamIndex({ teams, onPick }) {
+function TeamIndex({ teams, onPick, season, currentSeason }) {
   if (!teams || !teams.length) return null;
   return (
     <nav className="hf-container" style={{ padding: "0 24px 40px" }} aria-label="All teams">
@@ -309,7 +364,7 @@ function TeamIndex({ teams, onPick }) {
         {teams.map((t) => (
           <li key={t.id}>
             <a
-              href={buildPath({ team: t, tab: "team" })}
+              href={buildPath({ team: t, tab: "team", season, currentSeason })}
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                 e.preventDefault();
@@ -371,28 +426,36 @@ function SiteFooter({ updated }) {
   );
 }
 
-function Shell({ league }) {
-  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, data, meta } = league;
+function Shell({ index, league, route, setRoute, seasonLoading }) {
+  const currentSeason = index.currentSeason;
 
-  // The URL is the source of truth for which team/tab/player is showing. Every
-  // one of those combinations is a real prerendered page (see
-  // scripts/prerender.mjs), so a deep link has to land on the right state and
-  // in-app navigation has to write the matching URL back.
-  const initial = useMemo(
-    () => resolveRoute(typeof window === "undefined" ? "/" : window.location.pathname, league),
-    [league]
-  );
-  const [teamId, setTeamId] = useState(initial.teamId);
-  const [tab, setTab] = useState(initial.tab);
-  const [sel, setSel] = useState(initial.sel);
+  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, meta } = league;
+  const resolved = useMemo(() => resolveInSeason(route, league), [route, league]);
+  const team = teams.find((t) => t.id === resolved.teamId) || teams[0];
+  const tab = resolved.tab;
+  const sel = resolved.sel;
 
-  const team = teams.find((t) => t.id === teamId) || teams[0];
-  const bundle = data[teamId] || data[team.id];
-  const { games, roster, onOff, fourFactors, playerAdv, lineups, upcoming, shotZones, errors } = bundle;
+  // The selected team's own file, fetched on demand. Everything below reads
+  // through `bundle`, which is empty while that request is in flight.
+  // `season` is what's on screen (the loaded file); route.season is what's been
+  // asked for. They differ only for the moment between picking a season and its
+  // file arriving, which is what `pending` below waits out.
+  const season = league.meta.season;
+  const isCurrent = Number(season) === Number(currentSeason);
+  const pending = Number(route.season) !== Number(season);
+  const teamState = useTeam(season, team.id, { current: isCurrent });
+  const bundle = teamState.data || {};
+  const {
+    games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
+    lineups = [], upcoming = [], shotZones = null, errors = {},
+  } = bundle;
+  const teamLoading = teamState.loading || seasonLoading;
+  const player = roster[sel] || null;
 
   // Datasets stats.wnba.com didn't return on the last refresh, which the fetch
   // script back-filled from the previous snapshot. League-wide and per-team
-  // keys never collide, so one merged map covers every section.
+  // keys never collide, so one merged map covers every section. Completed
+  // seasons never carry these — their numbers are final, not stale.
   const stale = { ...(league.stale || {}), ...(bundle.stale || {}) };
   // The game log underpins both tabs, so that one gets a page-level banner
   // rather than a note inside a single section.
@@ -402,57 +465,76 @@ function Shell({ league }) {
     ? new Date(meta.generatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
     : null;
 
+  // --- navigation ---------------------------------------------------------
+  // Player slugs come from league.json (team.players), so a player URL can be
+  // built or read without that team's roster having arrived yet.
+  const playerSlugs = team.players || [];
+  const go = (next) => setRoute((r) => ({ ...r, ...next }));
+
   const pickTeam = (id) => {
-    setTeamId(id);
-    setSel(0); // reset player selection when switching teams
+    const t = teams.find((x) => x.id === id);
+    if (t) go({ teamSlug: teamSlug(t), playerSlug: null });
+  };
+  const pickSeason = (nextSeason) => {
+    // Stay on the same team when it existed that year; otherwise that season's
+    // landing, which resolves to its first team.
+    setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null });
+  };
+  const setTab = (nextTab) => {
+    if (nextTab === "team") return go({ playerSlug: null });
+    go({ playerSlug: (playerSlugs[0] || {}).slug || null });
+  };
+  const setSel = (i) => {
+    const p = playerSlugs[i];
+    if (p) go({ playerSlug: p.slug });
   };
 
-  // --- URL <-> state ------------------------------------------------------
-  const slugs = useMemo(() => rosterSlugs(roster), [roster]);
-  const path = buildPath({ team, tab, player: slugs[sel] });
+  const pathFor = (over) =>
+    buildPath({ team, season, currentSeason, tab: over.tab, player: over.player });
+  const path = buildPath({
+    team: route.teamSlug ? team : null,
+    season, currentSeason, tab,
+    player: (playerSlugs[sel] || {}).slug,
+  });
 
-  // Real hrefs for the roster, so the player pages are reachable by a crawler
-  // (and openable in a new tab) rather than only by a click handler. The
-  // handlers still take over an ordinary left-click to keep navigation instant.
-  const playerHref = (i) => buildPath({ team, tab: "players", player: slugs[i] });
+  // Real hrefs for the roster, so player pages are reachable by a crawler (and
+  // openable in a new tab) rather than only by a click handler. The handlers
+  // still take over an ordinary left-click to keep navigation instant.
+  const playerHref = (i) => pathFor({ tab: "players", player: (playerSlugs[i] || {}).slug });
   const playerHrefByName = (name) => {
-    const i = roster.findIndex((p) => p.name === name);
+    const i = playerSlugs.findIndex((p) => p.name === name);
     return i >= 0 ? playerHref(i) : null;
   };
   const goToPlayerByName = (name) => {
-    const i = roster.findIndex((p) => p.name === name);
-    if (i < 0) return;
-    setSel(i);
-    setTab("players");
+    const i = playerSlugs.findIndex((p) => p.name === name);
+    if (i >= 0) setSel(i);
   };
 
   // Push the URL after an in-app change, and keep the head in step with it so
   // the rendered page matches the prerendered one Google first indexed.
   const firstRender = useRef(true);
   useEffect(() => {
+    // Mid-switch the resolved team still belongs to the old season, so acting
+    // now would publish a path we're about to correct. Wait for the file.
+    if (pending) return;
     if (firstRender.current) {
       // Don't rewrite the address bar just because the app booted: "/" is its
-      // own canonical page, not a redirect to the first team.
+      // own canonical page, not a redirect to the first team. The head is still
+      // applied — routes without a prerendered file of their own (a past
+      // season's player pages) are served the generic shell and need it.
       firstRender.current = false;
-      return;
-    }
-    if (window.location.pathname !== path) {
+    } else if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
     }
-    applyHead(pageMeta({ team, tab, player: roster[sel], season: meta && meta.season, path }));
-  }, [path]);
-
-  // Back/forward: re-derive state from whatever URL we landed on.
-  useEffect(() => {
-    const onPop = () => {
-      const r = resolveRoute(window.location.pathname, league);
-      setTeamId(r.teamId);
-      setTab(r.tab);
-      setSel(r.sel);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [league]);
+    applyHead(pageMeta({
+      team: route.teamSlug ? team : null,
+      tab, player, season, path,
+      archive: !isCurrent,
+    }));
+    // `player` is in the deps because the roster arrives after the URL does:
+    // on a deep link into a player page the first pass has no roster yet and
+    // would leave the team's title on a player's page.
+  }, [path, pending, player && player.name]);
 
   return (
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
@@ -461,12 +543,17 @@ function Shell({ league }) {
       <TeamBar
         team={team}
         teams={teams}
-        teamId={teamId}
+        teamId={team.id}
         onPick={pickTeam}
         tab={tab}
         games={games}
+        loading={teamLoading}
         updated={updated}
-        season={meta && meta.season}
+        season={route.season}
+        seasons={index.seasons}
+        currentSeason={currentSeason}
+        onPickSeason={pickSeason}
+        seasonLoading={pending || seasonLoading}
       />
 
       <nav
@@ -495,9 +582,13 @@ function Shell({ league }) {
         </div>
       )}
 
-      {tab === "team" ? (
+      {teamState.error ? (
+        <LoadFailure error={teamState.error} what={`${team.name}'s ${season} data`} />
+      ) : teamLoading || !roster.length ? (
+        <TeamLoading team={team} season={season} done={!teamLoading} />
+      ) : tab === "team" ? (
         <TeamView
-          key={teamId}
+          key={`${season}:${team.id}`}
           games={games}
           roster={roster}
           onOff={onOff}
@@ -507,7 +598,8 @@ function Shell({ league }) {
           lineups={lineups}
           errors={errors}
           stale={stale}
-          teamId={teamId}
+          season={season}
+          teamId={team.id}
           teamName={team.teamName}
           teamProfiles={teamProfiles}
           upcoming={upcoming}
@@ -518,30 +610,94 @@ function Shell({ league }) {
           onPlayer={goToPlayerByName}
         />
       ) : (
-        <Dashboard key={teamId} games={games} roster={roster} sel={sel} setSel={setSel} leagueShotZones={leagueShotZones} positionShotZones={positionShotZones} playerHref={playerHref} />
+        <Dashboard
+          key={`${season}:${team.id}`}
+          games={games}
+          roster={roster}
+          sel={Math.min(sel, roster.length - 1)}
+          setSel={setSel}
+          leagueShotZones={leagueShotZones}
+          positionShotZones={positionShotZones}
+          playerHref={playerHref}
+          season={season}
+          teamId={team.id}
+        />
       )}
 
-      <TeamIndex teams={teams} onPick={pickTeam} />
+      <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />
 
       <SiteFooter updated={updated} />
     </div>
   );
 }
 
-export default function App() {
-  const { loading, error, data: league } = useLeagueData();
+// Shown in place of the charts while a team's file is on its way. The team is
+// already known from league.json, so this can name what it's fetching instead
+// of being an anonymous spinner.
+function TeamLoading({ team, season, done }) {
+  return (
+    <div className="hf-container" style={{ padding: "60px 24px", textAlign: "center", color: C.MUTE }}>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 16, color: C.BRAND }}>
+        {done ? `No ${season} data for the ${team.teamName}` : `Loading the ${team.teamName}…`}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 14 }}>
+        {done
+          ? `That team has no games recorded for the ${season} season.`
+          : `${season} season`}
+      </div>
+    </div>
+  );
+}
 
-  if (loading) {
-    return (
-      <Center>
-        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 20, color: C.BRAND, letterSpacing: "-0.02em" }}>
-          Loading WNBA data…
+function LoadFailure({ error, what }) {
+  return (
+    <div className="hf-container" style={{ padding: "40px 24px" }}>
+      <div className="hf-panel" style={{ padding: "22px 24px" }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 16, marginBottom: 8 }}>
+          Couldn't load {what}
         </div>
-        <div style={{ color: C.MUTE, marginTop: 8, fontSize: 14 }}>Loading the saved data snapshot.</div>
-      </Center>
-    );
-  }
+        <code style={{ color: C.LOSS_FG, fontSize: 13 }}>{String(error.message)}</code>
+      </div>
+    </div>
+  );
+}
 
+export default function App() {
+  // Three stages, each its own request: which seasons exist, then one season's
+  // league-wide data, then the team you're looking at (inside Shell). Splitting
+  // them is what keeps a cold load to a few tens of KB instead of a megabyte.
+  const index = useSeasonIndex();
+
+  const seasons = useMemo(
+    () => (index.data ? index.data.seasons.map((s) => Number(s.season)) : []),
+    [index.data]
+  );
+  const currentSeason = index.data ? index.data.currentSeason : null;
+
+  // The URL is the source of truth for season / team / player, and it lives
+  // here rather than in Shell because the season half of it decides which file
+  // to fetch — Shell can't own a value its own data depends on. Every one of
+  // those combinations is a real prerendered page (see scripts/prerender.mjs),
+  // so a deep link has to land on the right state and in-app navigation has to
+  // write the matching URL back.
+  const [route, setRoute] = useState(null);
+  useEffect(() => {
+    if (!index.data) return;
+    const read = () => setRoute(parsePath(window.location.pathname, { seasons, currentSeason }));
+    read();
+    window.addEventListener("popstate", read); // back/forward re-derives everything
+    return () => window.removeEventListener("popstate", read);
+  }, [index.data, seasons, currentSeason]);
+
+  // Null until the URL has been read, so a deep link into /2019 fetches 2019 and
+  // nothing else — defaulting to the current season here would download it on
+  // every archive page load, only to throw it away a render later.
+  const season = route ? route.season : null;
+  const seasonState = useSeason(season, {
+    current: Number(season) === Number(currentSeason),
+  });
+
+  const error = index.error || seasonState.error;
   if (error) {
     return (
       <Center>
@@ -550,8 +706,8 @@ export default function App() {
           <div style={{ color: C.MUTE, fontSize: 14, lineHeight: 1.6 }}>
             <code style={{ color: C.LOSS_FG }}>{String(error.message)}</code>
             <p style={{ marginTop: 12 }}>
-              The site reads a saved data file (<code>data/wnba.json</code>) instead of
-              calling stats.wnba.com directly. Generate or refresh it by running{" "}
+              The site reads saved data files under <code>data/</code> instead of calling
+              stats.wnba.com directly. Generate or refresh them by running{" "}
               <code>npm run fetch</code> from the project, then rebuild and re-upload.
             </p>
           </div>
@@ -560,16 +716,44 @@ export default function App() {
     );
   }
 
-  if (!league || !league.teams || !league.teams.length) {
+  // useAsync keeps the previous season's data while the next one loads, so
+  // switching seasons swaps the page's contents instead of blanking it.
+  const league = seasonState.data;
+  if (!index.data || !route || !league) {
     return (
       <Center>
-        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 18 }}>No teams found</div>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 20, color: C.BRAND, letterSpacing: "-0.02em" }}>
+          Loading WNBA data…
+        </div>
         <div style={{ color: C.MUTE, marginTop: 8, fontSize: 14 }}>
-          The saved data has no teams, or the <code>SEASON</code> in <code>scripts/fetch-data.mjs</code> needs updating (then re-run <code>npm run fetch</code>).
+          {season ? `Loading the ${season} season.` : "Loading the saved data snapshot."}
         </div>
       </Center>
     );
   }
 
-  return <Shell league={league} />;
+  if (!league.teams || !league.teams.length) {
+    return (
+      <Center>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 18 }}>No teams found</div>
+        <div style={{ color: C.MUTE, marginTop: 8, fontSize: 14 }}>
+          The {season} data has no teams. Re-fetch it with{" "}
+          <code>npm run fetch -- --season {season}</code>.
+        </div>
+      </Center>
+    );
+  }
+
+  // Deliberately not keyed by season: Shell holds no state of its own any more,
+  // and remounting it would reset the "have we navigated yet?" guard that keeps
+  // the app from rewriting the address bar on boot.
+  return (
+    <Shell
+      index={index.data}
+      league={league}
+      route={route}
+      setRoute={setRoute}
+      seasonLoading={seasonState.loading}
+    />
+  );
 }
