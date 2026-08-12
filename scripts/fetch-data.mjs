@@ -343,34 +343,6 @@ function shapeOnOff(json) {
   }).filter(Boolean);
 }
 
-// Four factors computed from box scores (the dedicated leaguedashteamstats
-// "Four Factors" measure type returns HTTP 500 on the WNBA backend, but the
-// four factors are just standard box-score formulas and the player game log
-// gives us every team's — and every opponent's — box score). Aggregated over
-// a team's games:
-//   eFG%   = (FGM + 0.5*3PM) / FGA
-//   TOV%   = TOV / (FGA + 0.44*FTA + TOV)
-//   OREB%  = OREB / (OREB + opponent DREB)
-//   FT rate= FTA / FGA
-function emptyBox() {
-  return { pts: 0, fgm: 0, fga: 0, fg3m: 0, fg3a: 0, ftm: 0, fta: 0, oreb: 0, dreb: 0, tov: 0 };
-}
-function addBox(a, b) {
-  for (const k in b) a[k] += b[k];
-  return a;
-}
-function factorsOf(x, oppDreb) {
-  const tovDen = x.fga + 0.44 * x.fta + x.tov;
-  const orebDen = x.oreb + oppDreb;
-  const p = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
-  return {
-    efg: p(x.fgm + 0.5 * x.fg3m, x.fga),
-    tov: p(x.tov, tovDen),
-    oreb: p(x.oreb, orebDen),
-    ftRate: p(x.fta, x.fga),
-  };
-}
-
 function shapePlayerAdv(rows) {
   return rows.map((r) => ({
     playerId: r.PLAYER_ID, name: r.PLAYER_NAME, gp: n(r.GP), min: r1(r.MIN),
@@ -571,11 +543,22 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   // ----- league-wide data (one call each) -----
   // Each one is numbered so a run that stalls says how far in it got. A
   // completed season skips the schedule call, hence one step fewer.
-  const LEAGUE_STEPS = final ? 6 : 7;
+  // The league-wide requests in the order they go out, so "[4/9]" counts against
+  // what actually runs — add a request below and add its label here. A completed
+  // season has no schedule to look ahead at, hence one fewer.
+  const LEAGUE_REQUESTS = [
+    "team game log", "player game log", "ratings", "playeradv", "profiles",
+    "factors", "teamShotZones", "playerShotZones",
+    ...(final ? [] : ["schedule"]),
+  ];
   let stepNo = 0;
   // Every line carries its season: one run can cover ten of them (--missing),
   // and in the log a line has to say which season it belongs to on its own.
-  const step = (label) => begin(`  • ${season} [${++stepNo}/${LEAGUE_STEPS}] ${label} … `);
+  const step = (label) => {
+    const known = LEAGUE_REQUESTS.indexOf(label); // -1 if someone forgot the list
+    stepNo = known >= 0 ? known + 1 : stepNo + 1;
+    begin(`  • ${season} [${stepNo}/${Math.max(LEAGUE_REQUESTS.length, stepNo)}] ${label} … `);
+  };
 
   console.log(`League-wide data for ${season}:`);
   step("team game log");
@@ -618,6 +601,26 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   }
   const ratingRows = await dash("ratings", "leaguedashteamstats", { ...TEAM_DASH(season), MeasureType: "Advanced", TeamID: "0" }, "LeagueDashTeamStats");
   const advRows = await dash("playeradv", "leaguedashplayerstats", { ...PLAYER_DASH(season), MeasureType: "Advanced", TeamID: "0" }, "LeagueDashPlayerStats");
+
+  // The per-100 profile and the four factors, both taken as published rather
+  // than derived here. stats.wnba.com counts possessions from play-by-play; the
+  // classic box-score estimate (FGA + 0.44*FTA - OREB + TOV) runs about 2% above
+  // that count for every team, which used to push every per-100 number on the
+  // site ~2% low. Asking for PerMode=Per100Possessions hands us their division
+  // instead of approximating it.
+  const profileRows = await dash(
+    "profiles", "leaguedashteamstats",
+    { ...TEAM_DASH(season), MeasureType: "Base", PerMode: "Per100Possessions", TeamID: "0" },
+    "LeagueDashTeamStats"
+  );
+  // The "Four Factors" measure type used to answer HTTP 500 on the WNBA backend,
+  // which is why these were once derived from box scores. It works now, for every
+  // season back to 2017, and returns the opponent's four alongside the team's.
+  const factorRows = await dash(
+    "factors", "leaguedashteamstats",
+    { ...TEAM_DASH(season), MeasureType: "Four Factors", PerMode: "Totals", TeamID: "0" },
+    "LeagueDashTeamStats"
+  );
 
   // Shot-location zones (one call each, all teams / all players). These use a
   // two-tier header, so they go through shapeShotZones rather than the generic
@@ -671,7 +674,10 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
         teamId: r.TEAM_ID,
         name: r.TEAM_NAME,
         abbr: abbrById.get(r.TEAM_ID) || lastName(r.TEAM_NAME).slice(0, 3).toUpperCase(),
-        off: r1(r.OFF_RATING), def: r1(r.DEF_RATING), net: r1(r.NET_RATING), pace: r1(r.PACE),
+        // PACE_PER40, not PACE: the WNBA backend inherits the NBA's 48-minute
+        // basis for PACE, so it reads ~97 for a league that plays 40-minute
+        // games. PACE_PER40 is the same possessions on the right clock (~81).
+        off: r1(r.OFF_RATING), def: r1(r.DEF_RATING), net: r1(r.NET_RATING), pace: r1(r.PACE_PER40),
       })) }
     : null;
 
@@ -752,83 +758,53 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   await sleep(DELAY_BETWEEN_CALLS_MS);
   }
 
-  // Per-(game, team) box-score totals from the player game log, used to derive
-  // four factors for each team and its opponents.
-  const boxByGameTeam = new Map(); // key: `${gameId}|${teamId}`
+  // Final (OT-inclusive) team score for a game = sum of that team's players'
+  // points. The player log is only consulted for this and for the rosters; every
+  // team-level rate now comes from stats.wnba.com already computed, so the
+  // box-score totals that used to be built here are gone — along with the team
+  // turnovers they silently dropped (a player row can't carry a shot-clock
+  // violation, so those totals ran ~40 turnovers per team per season light).
+  const ptsByGameTeam = new Map(); // key: `${gameId}|${teamId}` -> points
   for (const r of playerRows) {
     const key = `${r.GAME_ID}|${r.TEAM_ID}`;
-    let b = boxByGameTeam.get(key);
-    if (!b) { b = emptyBox(); boxByGameTeam.set(key, b); }
-    b.pts += n(r.PTS);
-    b.fgm += n(r.FGM); b.fga += n(r.FGA); b.fg3m += n(r.FG3M); b.fg3a += n(r.FG3A);
-    b.ftm += n(r.FTM); b.fta += n(r.FTA);
-    b.oreb += n(r.OREB); b.dreb += n(r.DREB); b.tov += n(r.TOV);
+    ptsByGameTeam.set(key, (ptsByGameTeam.get(key) || 0) + n(r.PTS));
   }
-  // Which two teams played in each game (to find a team's opponent per game).
-  const teamsInGame = new Map();
-  for (const r of teamRows) {
-    if (!teamsInGame.has(r.GAME_ID)) teamsInGame.set(r.GAME_ID, []);
-    teamsInGame.get(r.GAME_ID).push(r.TEAM_ID);
-  }
-  const oppOf = (gameId, teamId) => (teamsInGame.get(gameId) || []).find((id) => id !== teamId);
-  // Final (OT-inclusive) team score for a game = sum of that team's players' points.
-  const scoreOf = (gameId, tid) => {
-    const b = boxByGameTeam.get(`${gameId}|${tid}`);
-    return b ? b.pts : 0;
-  };
+  const scoreOf = (gameId, tid) => ptsByGameTeam.get(`${gameId}|${tid}`) || 0;
 
-  function computeFourFactors(teamId, teamGames) {
-    const tm = emptyBox(), op = emptyBox();
-    for (const g of teamGames) {
-      const tBox = boxByGameTeam.get(`${g.id}|${teamId}`);
-      const oppId = oppOf(g.id, teamId);
-      const oBox = oppId != null ? boxByGameTeam.get(`${g.id}|${oppId}`) : null;
-      if (tBox) addBox(tm, tBox);
-      if (oBox) addBox(op, oBox);
-    }
-    if (tm.fga === 0) return null;
-    return { team: factorsOf(tm, op.dreb), opp: factorsOf(op, tm.dreb) };
-  }
+  // Shooting & possession profile per team, per 100 possessions, exactly as
+  // stats.wnba.com publishes it. 2P is the only arithmetic left, and it's a
+  // subtraction of two counted numbers rather than an estimate.
+  const factorsByTeam = new Map(factorRows.map((r) => [r.TEAM_ID, r]));
+  const teamProfiles = profileRows.map((r) => {
+    const ff = factorsByTeam.get(r.TEAM_ID);
+    return {
+      teamId: r.TEAM_ID,
+      abbr: abbrById.get(r.TEAM_ID) || lastName(r.TEAM_NAME || "").slice(0, 3).toUpperCase(),
+      gp: n(r.GP),
+      fg3m: r1(r.FG3M),
+      fg3a: r1(r.FG3A),
+      fg2m: r1(n(r.FGM) - n(r.FG3M)),
+      fg2a: r1(n(r.FGA) - n(r.FG3A)),
+      ftm: r1(r.FTM),
+      fta: r1(r.FTA),
+      oreb: r1(r.OREB),
+      tov: r1(r.TOV),
+      // A rate, so it's pace-independent and the same in every PerMode.
+      efg: ff ? pctOf(ff.EFG_PCT) : 0,
+    };
+  });
 
-  // League-wide per-game shooting & possession profile for every team (used by
-  // the "profile vs the WNBA" section). Aggregate each team's box totals across
-  // its games, then express as per-game averages (fair across differing GP).
-  const profAgg = new Map(); // teamId -> box totals + gp + possessions
-  for (const [key, box] of boxByGameTeam) {
-    const [gid, tidStr] = key.split("|");
-    const tid = Number(tidStr);
-    let a = profAgg.get(tid);
-    if (!a) { a = { ...emptyBox(), gp: 0, poss: 0 }; profAgg.set(tid, a); }
-    addBox(a, box);
-    a.gp += 1;
-    // Possessions estimate, averaged with the opponent's (the standard team
-    // possession formula): 0.5 * (team + opp) of (FGA + 0.44*FTA - OREB + TOV).
-    const teamPoss = box.fga + 0.44 * box.fta - box.oreb + box.tov;
-    const oppId = oppOf(gid, tid);
-    const oppBox = oppId != null ? boxByGameTeam.get(`${gid}|${oppId}`) : null;
-    const oppPoss = oppBox ? oppBox.fga + 0.44 * oppBox.fta - oppBox.oreb + oppBox.tov : teamPoss;
-    a.poss += 0.5 * (teamPoss + oppPoss);
-  }
-  const teamProfiles = [];
-  for (const tid of teamIds) {
-    const a = profAgg.get(tid);
-    if (!a || a.gp === 0 || a.poss <= 0) continue;
-    const per100 = (x) => Math.round((x / a.poss) * 1000) / 10; // counting stat per 100 possessions
-    teamProfiles.push({
-      teamId: tid,
-      abbr: abbrById.get(tid) || lastName(nameById.get(tid) || "").slice(0, 3).toUpperCase(),
-      gp: a.gp,
-      fg3m: per100(a.fg3m),
-      fg3a: per100(a.fg3a),
-      fg2m: per100(a.fgm - a.fg3m),
-      fg2a: per100(a.fga - a.fg3a),
-      ftm: per100(a.ftm),
-      fta: per100(a.fta),
-      oreb: per100(a.oreb),
-      tov: per100(a.tov),
-      efg: a.fga > 0 ? Math.round(((a.fgm + 0.5 * a.fg3m) / a.fga) * 1000) / 10 : 0, // rate, pace-independent
-    });
-  }
+  // The four factors, team and opponent, as published. Note these are
+  // stats.wnba.com's definitions: turnover % is TOV/possessions (not Dean
+  // Oliver's TOV/(FGA + 0.44*FTA + TOV)), and its rebound percentages sit on a
+  // different base than OREB/(OREB + opponent DREB). Both read higher than the
+  // Basketball-Reference versions — same factor, different convention.
+  const fourFactorsByTeam = new Map(
+    factorRows.map((r) => [r.TEAM_ID, {
+      team: { efg: pctOf(r.EFG_PCT), tov: pctOf(r.TM_TOV_PCT), oreb: pctOf(r.OREB_PCT), ftRate: pctOf(r.FTA_RATE) },
+      opp: { efg: pctOf(r.OPP_EFG_PCT), tov: pctOf(r.OPP_TOV_PCT), oreb: pctOf(r.OPP_OREB_PCT), ftRate: pctOf(r.OPP_FTA_RATE) },
+    }])
+  );
 
   const advByTeam = new Map();
   for (const r of advRows) {
@@ -940,8 +916,8 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
     } catch (e) { errors.lineups = e.message; }
     await sleep(DELAY_BETWEEN_CALLS_MS);
 
-    const fourFactors = computeFourFactors(teamId, games);
-    if (!fourFactors) errors.fourFactors = "Not enough box-score data to compute four factors yet.";
+    const fourFactors = fourFactorsByTeam.get(teamId) || null;
+    if (!fourFactors) errors.fourFactors = errLeague.factors || "No four-factor row returned for this team.";
     const playerAdv = shapePlayerAdv(advByTeam.get(teamId) || []);
     if (!playerAdv.length && !errors.playerAdv) errors.playerAdv = "No rows returned.";
 
@@ -1040,7 +1016,7 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
       prevStale: (prev && prev.stale) || {},
       expired, final,
       errors: {
-        teamProfiles: playerLogErr,
+        teamProfiles: errLeague.profiles,
         leagueShotZones: errLeague.teamShotZones,
         positionShotZones: errLeague.playerShotZones,
         teamZoneWins: errLeague.teamShotZones,
@@ -1070,23 +1046,25 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   const named = (list, cap = 6) =>
     list.length > cap ? `${list.slice(0, cap).join(", ")} +${list.length - cap} more` : list.join(", ");
 
-  const failures = [];
+  const failures = []; // { line, calls } — one line per request, however many teams
   for (const [label, message] of [
     ["player game log", playerLogErr],
     ["schedule", scheduleErr],
     ...Object.entries(errLeague),
   ]) {
-    if (message) failures.push(`  • ${label} (league-wide) … ${message}`);
+    if (message) failures.push({ line: `  • ${label} (league-wide) … ${message}`, calls: 1 });
   }
   for (const f of teamFails.values()) {
-    failures.push(
-      `  • ${f.label} … ${f.message} — ${f.teams.length} of ${teams.length} teams: ${named(f.teams)}`
-    );
+    failures.push({
+      line: `  • ${f.label} … ${f.message} — ${f.teams.length} of ${teams.length} teams: ${named(f.teams)}`,
+      calls: f.teams.length,
+    });
   }
+  const failedCalls = failures.reduce((a, f) => a + f.calls, 0);
 
   if (failures.length) {
-    console.log(`\n  ${failures.length} failed request${failures.length === 1 ? "" : "s"} for ${season}:`);
-    for (const line of failures) console.log(line);
+    console.log(`\n  ${failedCalls} failed request${failedCalls === 1 ? "" : "s"} for ${season}:`);
+    for (const f of failures) console.log(f.line);
   } else {
     console.log(`\n  No failures — every ${season} request answered.`);
   }
@@ -1111,7 +1089,7 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   if (entry.missing) {
     console.log(`  ${entry.missing} dataset${entry.missing === 1 ? "" : "s"} still missing — retry with: npm run fetch -- --repair`);
   }
-  return { ...entry, failed: failures.length };
+  return { ...entry, failed: failedCalls };
 }
 
 // ----- CLI -------------------------------------------------------------------
@@ -1232,7 +1210,8 @@ async function main() {
           (d.missing ? ` · ${d.missing} dataset${d.missing === 1 ? "" : "s"} unavailable` : " · every section still filled")
       );
     }
-    if (degraded.some((d) => d.missing)) {
+    // (a single season already printed this hint above its own detail)
+    if (seasons.length > 1 && degraded.some((d) => d.missing)) {
       console.log(`Retry the gaps with: npm run fetch -- --repair`);
     }
   } else if (!failures.length) {

@@ -27,41 +27,32 @@ const qs = (params) =>
 // Shared filters: every request the fetch script makes is regular season only.
 const SEASON = (season) => ({ Season: String(season), SeasonType: "Regular Season" });
 
-// The possession estimate used for every "per 100" number on the site. Kept as
-// a string (not a comment) because it belongs on screen next to the numbers.
-export const POSS_FORMULA =
-  "possessions = 0.5 × ((FGA + 0.44×FTA − OREB + TOV) + the opponent's same line)";
-
-// Turnovers are the one box-score field we cannot total exactly from the player
-// game log: team turnovers (shot-clock violations, 5-second inbounds, too many
-// players) belong to no player, so they never appear in a player row. Every
-// other field — FGA, 3PA, FTA, OREB, DREB, PTS — reconciles exactly against the
-// team log. Called out wherever turnovers reach the screen.
-export const TOV_CAVEAT =
-  "Turnovers are summed from the player game log, which excludes team turnovers " +
-  "(shot-clock violations and the like), so they run a little under the team total on wnba.com.";
-
 const SOURCES = {
   // --- league-wide -------------------------------------------------------
+  // Taken as published, in wnba.com's own per-100 mode: their possession count
+  // comes from play-by-play, where the classic box-score estimate
+  // (FGA + 0.44×FTA − OREB + TOV) runs ~2% high. The linked page shows these
+  // exact numbers, so it reconciles cell-for-cell.
   teamProfiles: ({ season }) => ({
-    label: "Teams · Traditional (season totals)",
-    url: `${STATS_HOST}/teams/traditional/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,
-    formula: `Rates are ours: each total ÷ possessions × 100, where ${POSS_FORMULA}. wnba.com publishes the totals, not the rate.`,
-    caveat: TOV_CAVEAT,
+    label: "Teams · Traditional (per 100 possessions)",
+    url: `${STATS_HOST}/teams/traditional/?${qs({ ...SEASON(season), PerMode: "Per100Possessions" })}`,
+    formula: "Shown as published. 2P is the only arithmetic — FGA minus 3PA, both counted.",
   }),
 
   fourFactors: ({ season }) => ({
     label: "Teams · Four Factors",
     url: `${STATS_HOST}/teams/four-factors/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,
     formula:
-      "Computed here from box-score totals — eFG% = (FGM + 0.5×3PM) ÷ FGA · TOV% = TOV ÷ (FGA + 0.44×FTA + TOV) · " +
-      "OREB% = OREB ÷ (OREB + opponent DREB) · FT rate = FTA ÷ FGA.",
-    caveat: TOV_CAVEAT,
+      "Shown as published, in wnba.com's definitions — turnover % is turnovers ÷ possessions, and the " +
+      "rebound percentages sit on a different base than Basketball-Reference's, so both read higher there.",
   }),
 
   teamRanks: ({ season }) => ({
     label: "Teams · Advanced",
     url: `${STATS_HOST}/teams/advanced/?${qs({ ...SEASON(season), PerMode: "PerGame" })}`,
+    formula:
+      "Pace is the PACE_PER40 column — possessions per 40 minutes. wnba.com's headline PACE is on the " +
+      "NBA's 48-minute basis and reads about 20% higher for the same game.",
   }),
 
   teamShotZones: ({ season }) => ({

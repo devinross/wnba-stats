@@ -400,15 +400,17 @@ roster, on/off, and lineup endpoints are per-team (one call per team):
 - `leaguedashlineups` (Advanced) - five-player units -> the eight most-used
   lineups by minutes with their net rating.
 
-A per-game **shooting & possession profile** for every team (3PM, 3PA, 2PM, 2PA,
-FTM, FTA, offensive rebounds, turnovers, eFG%) is also computed from the box
-scores, powering the "profile vs the WNBA" comparison on the Team tab.
+- `leaguedashteamstats` (Base, `PerMode=Per100Possessions`) - every team's
+  shooting & possession profile per 100 possessions (3PM, 3PA, FTM, FTA,
+  offensive rebounds, turnovers), powering the "profile vs the WNBA" comparison.
+- `leaguedashteamstats` ("Four Factors") - team and opponent eFG%, turnover %,
+  offensive-rebound % and FT rate.
 
-The four factors (team and opponent eFG%, turnover %, offensive-rebound %, and
-FT rate) are **computed from the box scores** above rather than fetched — the
-WNBA `leaguedashteamstats` "Four Factors" measure type returns HTTP 500, but the
-four factors are standard box-score formulas, so they're derived from each
-team's and its opponents' game lines.
+Both of those were once **derived here from box scores**; they are now taken as
+published. See "Nothing is estimated" below for why that mattered — and note
+that the "Four Factors" measure type used to answer HTTP 500 on the WNBA
+backend, which is why it was originally derived. It works now, for every season
+back to 2017.
 
 The `leaguedash*` endpoints are sent the WNBA's standard filter parameters but
 **not** the NBA-only `TwoWay` / `ISTRound` params, which make the WNBA versions
@@ -424,25 +426,44 @@ parameter sets in `scripts/fetch-data.mjs`. **If you change a `PerMode` or a
 `MeasureType` in the fetch script, change it in `sources.js` too**, or the
 footnote will point at a view that doesn't reconcile.
 
-Where the site computes something wnba.com doesn't publish, the footnote also
-states the arithmetic. Two things are worth knowing when a number here doesn't
-match another site:
+### Nothing is estimated
 
-- **Possessions are an estimate**, not a count:
-  `0.5 × ((FGA + 0.44×FTA − OREB + TOV) + the opponent's same line)`. Every
-  "per 100" number on the site divides by that. Other sites use different
-  estimators — Basketball-Reference uses a `0.4` free-throw coefficient and
-  subtracts a rebound-rate-weighted term instead of raw OREB, and wnba.com's own
-  `POSS` field is different again. The three disagree by roughly 3%, so a rate
-  that looks a little low here usually isn't a data error — it's the
-  denominator. (For the 2025 Sparks: 31.2 3PA/100 here, 31.4 by wnba.com's
-  `POSS`, 32.1 by Basketball-Reference.)
-- **Turnovers come from the player game log**, which has no row for *team*
-  turnovers (shot-clock violations, 5-second inbounds, too many players), so
-  team turnover totals run slightly under wnba.com's — 38 over the 2025 Sparks
-  season, 595 league-wide. Every other box-score field (FGA, 3PA, FTA, OREB,
-  DREB, PTS) reconciles exactly against the team game log. This affects the
-  possession estimate and the four factors' TOV%.
+Every team-level rate is taken from stats.wnba.com already computed, so the
+linked page reconciles cell-for-cell. This was not always true, and the three
+things that changed are worth recording, because each moved numbers on screen:
+
+- **Possessions were estimated**, with the classic
+  `0.5 × ((FGA + 0.44×FTA − OREB + TOV) + the opponent's same line)`. wnba.com
+  counts possessions from play-by-play instead — within a game the two teams'
+  counts differ by at most 3, which an estimator can't reproduce. The estimate
+  ran **2.1% high** for every team (league-wide ratio 0.979, ~1.7 possessions
+  per game), which pushed every per-100 number about 2% low. Asking for
+  `PerMode=Per100Possessions` hands us their division instead. *2025 Sparks
+  3PA/100: was 31.2, now 31.4.*
+- **Team turnovers were missing.** Team totals were summed from the player game
+  log, which has no row for shot-clock violations, 5-second inbounds or too many
+  players — 38 over the 2025 Sparks season, 595 league-wide. Every other field
+  (FGA, 3PA, FTA, OREB, DREB, PTS) reconciled exactly; only turnovers didn't.
+  Nothing sums player rows into team totals any more. *2025 Sparks TOV/100: was
+  17.2, now 18.4.*
+- **Pace was on a 48-minute clock.** The WNBA backend inherits the NBA's `PACE`
+  basis, so it reports ~97 for a league that plays 40-minute games. The Advanced
+  response also carries `PACE_PER40`, which is what the site now reads. *2025
+  Sparks: was 96.8, now 80.7.*
+
+The four factors are wnba.com's definitions, which are **not** the
+Basketball-Reference ones. Turnover % is `TOV ÷ possessions` rather than Dean
+Oliver's `TOV ÷ (FGA + 0.44×FTA + TOV)`, and the rebound percentages sit on a
+different base than `OREB ÷ (OREB + opponent DREB)`. Both read higher here than
+on Basketball-Reference — same factor, different convention, not a discrepancy.
+*2025 Sparks: TOV% 18.4 vs BBRef's 15.7; OREB% 29.5 vs 24.1. eFG% and FT rate
+are identical either way.*
+
+One estimate is left, and it is not a team stat: **true shooting %** on the
+Team-tab shooting panel and the Players tab still uses `PTS ÷ (2 × (FGA +
+0.44×FTA))`, computed from game logs, because the per-game TS% trend needs a
+per-game number. The exact season TS% is available in `leaguedashplayerstats`
+(Advanced) if that ever matters more than the trend line does.
 
 ## Project map
 
