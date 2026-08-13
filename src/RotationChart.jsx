@@ -13,12 +13,19 @@
 // when available. `gp` is on every row so a thin sample is visible rather than
 // implied.
 //
+// The whole season averages away the thing a rotation actually does, which is
+// change — so the same grid can be cut into quarters of the schedule (eleven
+// games each, a 44-game season). The row set and its order are fixed by the
+// season across every toggle, so switching blocks re-shades the grid instead of
+// reshuffling it and only the pattern moves.
+//
 // Built from stats.wnba.com's `gamerotation` endpoint (one request per game),
 // aggregated by scripts/fetch-data.mjs into team.rotation.
 // ---------------------------------------------------------------------------
 
 import React, { useMemo, useState } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
+import { MetricButton } from "./ShootingWinChart.jsx";
 import StaleNote from "./StaleNote.jsx";
 import SourceNote from "./SourceNote.jsx";
 
@@ -28,6 +35,9 @@ const QUARTER = 10;
 // Keep the grid readable: a player who appeared in a handful of games has a
 // row driven by noise, and a deep-bench row of near-empty cells says nothing.
 const MIN_SHARE_OF_GAMES = 0.25;
+// Placeholder for a player who has no data in the selected block: the row keeps
+// its slot, drawn as empty cells.
+const EMPTY_ROW = new Array(MINUTES).fill(0);
 const MIN_MPG = 4;
 
 // White → brand plum. The ramp is the share of games on the floor, so it reads
@@ -58,14 +68,33 @@ function clock(min) {
 
 export default function RotationChart({ rotation, stale, source, selectedName, onPlayer, playerHref }) {
   const [hover, setHover] = useState(null);
+  const [view, setView] = useState("all"); // "all" or a segment index
 
+  const segments = (rotation && rotation.segments) || [];
+
+  // The rows, decided once from the whole season and reused by every toggle.
+  // A player is in the grid if she cleared the bar across the season *or* in
+  // any single block — otherwise a midseason arrival who plays 30 minutes a
+  // night for the last quarter would be missing from the block that's about
+  // her. Order is always season minutes, so the toggles only change shading.
   const players = useMemo(() => {
     if (!rotation || !Array.isArray(rotation.players)) return [];
-    const teamGames = rotation.games || 0;
-    return rotation.players.filter(
-      (p) => p.gp >= Math.max(2, teamGames * MIN_SHARE_OF_GAMES) && p.mpg >= MIN_MPG
-    );
-  }, [rotation]);
+    const clears = (p, games) => p.gp >= Math.max(2, games * MIN_SHARE_OF_GAMES) && p.mpg >= MIN_MPG;
+    const keep = new Set();
+    for (const p of rotation.players) if (clears(p, rotation.games || 0)) keep.add(p.id);
+    for (const s of segments) {
+      for (const p of s.players) if (clears(p, s.games || 0)) keep.add(p.id);
+    }
+    return rotation.players.filter((p) => keep.has(p.id));
+  }, [rotation, segments]);
+
+  // The block being shown, and its per-player rows keyed for lookup. A player
+  // missing from this map didn't appear in these games at all.
+  const active = view === "all" ? null : segments[view];
+  const rowById = useMemo(() => {
+    const src = active ? active.players : (rotation && rotation.players) || [];
+    return new Map(src.map((p) => [p.id, p]));
+  }, [active, rotation]);
 
   if (!players.length) {
     return (
@@ -80,13 +109,15 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
   }
 
   const teamGames = rotation.games || 0;
+  const shownGames = active ? active.games : teamGames;
 
   return (
     <section style={panel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
         <h2 style={heading}>Rotation pattern · when each player is on the floor</h2>
         <span style={{ fontSize: 11, color: C.MUTE }}>
-          darker = on the floor more often · {teamGames} game{teamGames === 1 ? "" : "s"}
+          darker = on the floor more often · {shownGames} game{shownGames === 1 ? "" : "s"}
+          {active ? ` of games ${active.from}–${active.to}` : ""}
         </span>
       </div>
       <StaleNote stale={stale} />
@@ -95,6 +126,35 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
         player was on the floor for that minute, so a starter who missed time still reads as a
         starter. Rows that are photo-negatives of each other are the substitution pairs.
       </p>
+
+      {/* Season blocks. Eleven games is a quarter of a 44-game season, which is
+          about the timescale a rotation actually changes on — an injury, a
+          trade, a rookie earning minutes. The rows stay put between blocks so
+          the difference is the only thing that moves. */}
+      {segments.length > 1 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
+          <MetricButton active={view === "all"} onClick={() => setView("all")}>
+            All games
+          </MetricButton>
+          {segments.map((s, i) => (
+            <MetricButton key={s.from} active={view === i} onClick={() => setView(i)}>
+              {s.from}–{s.to}
+            </MetricButton>
+          ))}
+          <span style={{ fontSize: 11, color: C.MUTE, marginLeft: 2 }}>
+            {active
+              ? `${active.games} of games ${active.from}–${active.to} have rotation data`
+              : `${teamGames} of ${rotation.scheduled || teamGames} games have rotation data`}
+          </span>
+        </div>
+      )}
+
+      {active && !active.games && (
+        <p style={{ fontSize: 12, color: C.MUTE, margin: "0 0 12px", lineHeight: 1.5 }}>
+          None of games {active.from}–{active.to} have rotation data yet — the per-game endpoint
+          fills in over several nightly refreshes.
+        </p>
+      )}
 
       {/* Legend */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 11, color: C.MUTE }}>
@@ -111,6 +171,10 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
         <div style={{ minWidth: 560 }}>
           {players.map((p) => {
             const selected = p.name === selectedName;
+            // `p` fixes the row's identity and position (season order); `row`
+            // is what the selected block actually has for her, which may be
+            // nothing at all.
+            const row = rowById.get(p.id) || null;
             return (
               <div key={p.id} style={{ display: "grid", gridTemplateColumns: "132px 1fr", gap: 10, alignItems: "center", marginBottom: 3 }}>
                 <div
@@ -120,10 +184,14 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
-                    color: selected ? C.BRAND : C.TXT,
+                    color: selected ? C.BRAND : row ? C.TXT : C.MUTE,
                     fontWeight: selected ? 700 : 400,
                   }}
-                  title={`${p.name} — ${p.gp} game${p.gp === 1 ? "" : "s"}, ${p.starts} start${p.starts === 1 ? "" : "s"}`}
+                  title={
+                    row
+                      ? `${p.name} — ${row.gp} game${row.gp === 1 ? "" : "s"}, ${row.starts} start${row.starts === 1 ? "" : "s"}`
+                      : `${p.name} — no appearances in these games`
+                  }
                 >
                   {/* A player can appear in the rotation but not the current
                       roster (mid-season trades), and there's no page to send
@@ -149,14 +217,18 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
                   )}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: `repeat(${MINUTES}, 1fr)`, gap: 1.5 }}>
-                  {p.heat.map((v, m) => (
+                  {/* An absent row keeps its slot rather than collapsing: "she
+                      wasn't in this stretch of the season" is a fact about the
+                      rotation, and losing the row would hide it. */}
+                  {(row ? row.heat : EMPTY_ROW).map((v, m) => (
                     <div
                       key={m}
-                      onMouseEnter={() => setHover({ p, m, v })}
+                      onMouseEnter={() => row && setHover({ p, row, m, v })}
                       onMouseLeave={() => setHover(null)}
                       style={{
                         height: 18,
-                        background: shade(v),
+                        background: row ? shade(v) : "transparent",
+                        border: row ? "none" : `1px dashed ${C.LINE}`,
                         borderRadius: 2,
                         // A hairline before each quarter keeps the eye from
                         // reading the 40 columns as one undifferentiated strip.
@@ -191,7 +263,8 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
             <span style={{ color: C.BRAND, fontWeight: 700, fontFamily: FONT_DISPLAY }}>{hover.p.name}</span>
             {" · "}{clock(hover.m)}{" · on the floor in "}
             <strong style={{ color: C.TXT }}>{hover.v}%</strong>
-            {` of her ${hover.p.gp} game${hover.p.gp === 1 ? "" : "s"}`}
+            {` of her ${hover.row.gp} game${hover.row.gp === 1 ? "" : "s"}`}
+            {active ? ` in games ${active.from}–${active.to}` : ""}
           </>
         ) : (
           "Hover a cell for the exact share."
@@ -210,22 +283,35 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
             </tr>
           </thead>
           <tbody>
-            {players.map((p) => (
-              <tr key={p.id} style={{ background: p.name === selectedName ? C.PANEL_2 : "transparent" }}>
-                <td style={{ ...td, textAlign: "left", fontWeight: p.name === selectedName ? 700 : 400 }}>{p.name}</td>
-                <td style={td}>{p.gp}</td>
-                <td style={td}>{p.starts}</td>
-                <td style={td}>{p.mpg}</td>
-                <td style={td}>{p.stints}</td>
-                <td style={td}>{p.avgStint}</td>
-                <td style={{ ...td, color: p.firstIn == null ? C.MUTE : C.TXT }}>
-                  {p.firstIn == null ? "always starts" : `${p.firstIn} min`}
-                </td>
-                <td style={{ ...td, color: p.plus > 0 ? C.GOOD : p.plus < 0 ? C.LOSS_FG : C.MUTE }}>
-                  {p.plus > 0 ? "+" : ""}{p.plus}
-                </td>
-              </tr>
-            ))}
+            {players.map((p) => {
+              const row = rowById.get(p.id);
+              if (!row) {
+                return (
+                  <tr key={p.id}>
+                    <td style={{ ...td, textAlign: "left", color: C.MUTE }}>{p.name}</td>
+                    <td style={{ ...td, color: C.MUTE }} colSpan={7}>
+                      no appearances in these games
+                    </td>
+                  </tr>
+                );
+              }
+              return (
+                <tr key={p.id} style={{ background: p.name === selectedName ? C.PANEL_2 : "transparent" }}>
+                  <td style={{ ...td, textAlign: "left", fontWeight: p.name === selectedName ? 700 : 400 }}>{p.name}</td>
+                  <td style={td}>{row.gp}</td>
+                  <td style={td}>{row.starts}</td>
+                  <td style={td}>{row.mpg}</td>
+                  <td style={td}>{row.stints}</td>
+                  <td style={td}>{row.avgStint}</td>
+                  <td style={{ ...td, color: row.firstIn == null ? C.MUTE : C.TXT }}>
+                    {row.firstIn == null ? "always starts" : `${row.firstIn} min`}
+                  </td>
+                  <td style={{ ...td, color: row.plus > 0 ? C.GOOD : row.plus < 0 ? C.LOSS_FG : C.MUTE }}>
+                    {row.plus > 0 ? "+" : ""}{row.plus}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -233,7 +319,9 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
         A shift is one unbroken stretch on the floor. "First sub in" is the average game clock of
         her first appearance in the games she came off the bench — blank for a player who has
         always started. Players under {MIN_MPG} minutes a game, or appearing in under a quarter of
-        the team's games, are left out of the grid.
+        the team's games, are left out — unless they clear that bar inside one block, so a
+        midseason arrival still shows up in the stretch she played. Rows and their order are fixed
+        by the whole season, so switching blocks changes the shading and nothing else.
       </p>
       <SourceNote source={source} />
     </section>

@@ -262,7 +262,7 @@ function homeShell() {
     })
     .join("");
   return `<h1>${season} WNBA Stats</h1>
-      <p>Standings, ${isArchive ? "results" : "today's games"}, league leaders and team analytics for all ${league.teams.length} WNBA teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
+      <p>${isArchive ? "Final standings" : "Standings, today's games"}, league leaders and team analytics for all ${league.teams.length} WNBA teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
       ${slateShell(teamById)}
       ${standingsShell(teamById)}
       ${leadersShell(teamById)}

@@ -216,7 +216,7 @@ function Scoreboard({ scoreboard, byId, recordOf, teamHref, onGo, stale, source 
           {!isToday && <span style={{ color: C.MUTE, fontWeight: 400 }}> · {dayDetail(day)}</span>}
         </>
       }
-      hint={`${games.length} game${games.length === 1 ? "" : "s"}${isToday ? "" : " · times in your timezone"}`}
+      hint={`${games.length} game${games.length === 1 ? "" : "s"} · times in your timezone`}
       stale={stale}
       source={source}
     >
@@ -451,18 +451,18 @@ function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
       <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.BRAND, fontWeight: 700 }}>
         {cat.label}
       </div>
+      {/* The leader's name gets the card's full width — five of these sit side
+          by side at desktop width, and a name beside the number truncates. */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
         {teamOf(top.teamId) && <TeamBadge team={teamOf(top.teamId)} size={26} />}
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {name(top)}
-          </div>
-          <div style={{ fontSize: 11, color: C.MUTE }}>{(teamOf(top.teamId) || {}).abbr}</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, lineHeight: 1.25 }}>{name(top)}</div>
+          <div style={{ fontSize: 11, color: C.MUTE, lineHeight: 1.2 }}>{(teamOf(top.teamId) || {}).abbr}</div>
         </div>
-        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, fontWeight: 700, lineHeight: 1 }}>
-          {top.v.toFixed(1)}
-          <span style={{ fontSize: 10, color: C.MUTE, fontWeight: 600, marginLeft: 3 }}>{cat.unit}</span>
-        </div>
+      </div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 24, fontWeight: 700, lineHeight: 1, marginTop: 8 }}>
+        {top.v.toFixed(1)}
+        <span style={{ fontSize: 10, color: C.MUTE, fontWeight: 600, marginLeft: 3 }}>{cat.unit}</span>
       </div>
       <ol style={{ listStyle: "none", margin: "10px 0 0", padding: 0, display: "grid", gap: 5 }}>
         {rest.map((row, i) => (
@@ -621,7 +621,9 @@ export default function LeagueView({
           stale={stale.leaders}
           source={src("leaders")}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(215px, 1fr))", gap: 12 }}>
+          {/* 190px is what lets all five categories sit on one row at full
+              width; they wrap to two and then one as the page narrows. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
             {LEADER_CATS.map((cat) => (
               <LeaderCard
                 key={cat.key}

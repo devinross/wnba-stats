@@ -372,29 +372,35 @@ function LeagueBar({ season, seasons, currentSeason, onPickSeason, seasonLoading
         </div>
         <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.1, margin: 0 }}>
           {season} WNBA Stats
-          <span className="sr-only"> — standings, today's games, league leaders and every team</span>
+          <span className="sr-only">
+            {" — "}standings, {isCurrent ? "today's games" : "results"}, league leaders and every team
+          </span>
         </h1>
         <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
           Every team, one page{updated ? ` · updated ${updated}` : ""}
         </div>
       </div>
-      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
         <SeasonPicker season={season} seasons={seasons} onChange={onPickSeason} loading={seasonLoading} />
-        {isCurrent && (
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Today</div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>
-              {todayGames || <span style={{ color: C.MUTE }}>—</span>}
+        {/* The tiles wrap as one group rather than individually, so a phone gets
+            a tidy row under the picker instead of two of them and an orphan. */}
+        <div style={{ display: "flex", gap: 22, alignItems: "center" }}>
+          {isCurrent && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Today</div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>
+                {todayGames || <span style={{ color: C.MUTE }}>—</span>}
+              </div>
             </div>
+          )}
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Teams</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{teams.length}</div>
           </div>
-        )}
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Teams</div>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{teams.length}</div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Games</div>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{played ? Math.round(played) : "—"}</div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>Games</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{played ? Math.round(played) : "—"}</div>
+          </div>
         </div>
       </div>
     </div>
