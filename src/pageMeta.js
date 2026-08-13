@@ -61,21 +61,21 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
   if (archive && season) {
     return {
       canonical,
-      title: `${season} WNBA Stats — Every Team's Season`,
+      title: `${season} WNBA Standings & Season Stats`,
       description:
-        `The complete ${season} WNBA season: team shot-zone charts, four factors, lineup net ` +
-        `ratings, on/off impact, league rankings and every player's game log.`,
-      ogTitle: `${season} WNBA season stats`,
+        `The complete ${season} WNBA season: final standings, per-game league leaders, team ` +
+        `shot-zone charts, four factors, lineup net ratings and every player's game log.`,
+      ogTitle: `${season} WNBA season — standings and stats`,
     };
   }
 
   return {
     canonical,
-    title: "WNBA Stats — Shot Charts & Four Factors | Highlight Factory",
+    title: "WNBA Standings, Scores & Team Stats | Highlight Factory",
     description:
-      "Free WNBA team and player analytics: shot-zone charts, four factors, lineup net ratings, " +
-      "on/off impact and league-wide rankings for every team. Updated nightly.",
-    ogTitle: "WNBA Stats — Shot Charts, Four Factors & Lineups",
+      "Today's WNBA games, the full league standings, per-game leaders and every team's shot-zone " +
+      "charts, four factors, lineup net ratings and on/off impact. Updated nightly.",
+    ogTitle: "WNBA Standings, Today's Games & Team Stats",
   };
 }
 

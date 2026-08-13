@@ -12,6 +12,7 @@
 //     npm run fetch -- --seasons 17-19  a range (short or full years)
 //     npm run fetch -- --repair         retry only the seasons with gaps in them
 //     npm run fetch -- --out <dir>      write somewhere other than public/data
+//     npm run fetch -- --no-rotations   skip the per-game rotation backfill
 //
 // Completed seasons never change, so they are fetched once and then left alone;
 // only the current season is worth re-running. Output layout (see writeSeason):
@@ -19,6 +20,12 @@
 //     public/data/index.json            the season list the app boots from
 //     public/data/2026/league.json      teams + league-wide sets for that season
 //     public/data/2026/teams/<id>.json  one file per team
+//     public/data/2026/rotations/<g>.json  one file per game's substitutions
+//
+// Everything but the rotations is a handful of league-wide requests. Rotations
+// are one request per game, so they're cached per game and never refetched —
+// the first run on a season is long, every run after it is short. See the
+// "rotations" section below.
 //
 // Run from a machine whose IP stats.wnba.com doesn't block (your Mac is fine;
 // many shared hosts are not). It prints the real status of every request.
@@ -51,6 +58,16 @@ const DELAY_BETWEEN_CALLS_MS = 500; // be gentle with the undocumented endpoint
 // Completed seasons are exempt: their numbers are final, so last year's copy of
 // a dataset is not "stale", it's just the answer.
 const MAX_STALE_DAYS = 21;
+
+// How much of the league schedule the home page's scoreboard carries: enough
+// finished games behind today to show last night's results, enough ahead to
+// show the next few days. See the scoreboard block in fetchSeason.
+const SCOREBOARD_BACK_DAYS = 8;
+const SCOREBOARD_FWD_DAYS = 10;
+
+// A per-game average only counts as a league lead once a player has appeared in
+// this share of her team's games — the WNBA's own qualifier for its leaderboards.
+const LEADER_MIN_SHARE = 0.7;
 
 const HEADERS = {
   "User-Agent":
@@ -166,17 +183,17 @@ function done(result) {
   live = null;
 }
 
-async function statsFetch(endpoint, params) {
+async function statsFetch(endpoint, params, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const usp = new URLSearchParams(params);
   const url = `${HOST}/stats/${endpoint}?${usp.toString()}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(url, { headers: HEADERS, signal: controller.signal });
   } catch (e) {
     clearTimeout(timer);
-    throw new Error(e.name === "AbortError" ? `timed out after ${REQUEST_TIMEOUT_MS}ms` : e.message);
+    throw new Error(e.name === "AbortError" ? `timed out after ${timeoutMs}ms` : e.message);
   }
   clearTimeout(timer);
   if (!res.ok) {
@@ -299,6 +316,113 @@ function buildGames(teamRows, teamId, rowsByGame, scoreOf) {
     .map((g, idx) => ({ ...g, i: idx })); // contiguous game indices after filtering
 }
 
+/**
+ * League standings, from the same team game log the per-team game lists are
+ * built from. Nothing here is a fresh request: it's the one table a league-wide
+ * page has to open with, and computing it once at fetch time keeps the home
+ * page from having to download all fifteen team files to add up W-L.
+ *
+ * Sorted the way the WNBA seeds: win percentage, then point differential. There
+ * are no conferences in the standings — the league dropped that split for
+ * playoff seeding, so this is one table.
+ */
+function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
+  const byTeam = new Map(teamIds.map((id) => [id, []]));
+  const chronological = [...teamRows].sort((a, b) => (a.GAME_DATE < b.GAME_DATE ? -1 : 1));
+  for (const r of chronological) {
+    const list = byTeam.get(r.TEAM_ID);
+    if (!list) continue;
+    const opp = (rowsByGame.get(r.GAME_ID) || []).find((x) => x.TEAM_ID !== r.TEAM_ID);
+    const tm = Math.max(n(r.PTS), scoreOf(r.GAME_ID, r.TEAM_ID));
+    const op = opp ? Math.max(n(opp.PTS), scoreOf(r.GAME_ID, opp.TEAM_ID)) : 0;
+    if (tm <= 0 && op <= 0) continue; // scheduled but not yet played
+    list.push({ w: r.WL === "W", home: String(r.MATCHUP || "").includes(" vs"), tm, op });
+  }
+
+  const rows = [];
+  for (const [teamId, games] of byTeam) {
+    const gp = games.length;
+    const w = games.filter((g) => g.w).length;
+    const rec = (arr) => [arr.filter((g) => g.w).length, arr.filter((g) => !g.w).length];
+    const [l10w, l10l] = rec(games.slice(-10));
+    const [homeW, homeL] = rec(games.filter((g) => g.home));
+    const [awayW, awayL] = rec(games.filter((g) => !g.home));
+    // Signed run of the same result, most recent first: +3 = won the last three.
+    let streak = 0;
+    for (let i = games.length - 1; i >= 0; i--) {
+      if (i < games.length - 1 && games[i].w !== games[i + 1].w) break;
+      streak += games[i].w ? 1 : -1;
+    }
+    const pf = games.reduce((a, g) => a + g.tm, 0);
+    const pa = games.reduce((a, g) => a + g.op, 0);
+    rows.push({
+      teamId,
+      gp, w, l: gp - w,
+      pct: gp ? Math.round((w / gp) * 1000) / 1000 : 0,
+      pf: gp ? r1(pf / gp) : 0,
+      pa: gp ? r1(pa / gp) : 0,
+      diff: gp ? r1((pf - pa) / gp) : 0,
+      streak,
+      l10w, l10l, homeW, homeL, awayW, awayL,
+    });
+  }
+
+  rows.sort((a, b) => b.pct - a.pct || b.diff - a.diff);
+  // Games behind the leader, the usual half-game arithmetic.
+  const lead = rows[0];
+  return rows.map((t, i) => ({
+    ...t,
+    rank: i + 1,
+    gb: lead ? Math.round((((lead.w - t.w) + (t.l - lead.l)) / 2) * 10) / 10 : 0,
+  }));
+}
+
+// The per-game categories the league leaderboard carries, in display order.
+const LEADER_CATS = [
+  ["pts", "Points"],
+  ["reb", "Rebounds"],
+  ["ast", "Assists"],
+  ["stl", "Steals"],
+  ["blk", "Blocks"],
+];
+
+/**
+ * The league's per-game leaders in each category — top five, qualified players
+ * only. Built from the player game log that's already in memory. Players are
+ * identified by name + team so the app can resolve them to a player page
+ * through league.json's own roster slugs rather than carrying a second set.
+ */
+function buildLeaders(playerRows, gpByTeam, { top = 5 } = {}) {
+  const byPlayer = new Map();
+  for (const r of playerRows) {
+    let p = byPlayer.get(r.PLAYER_ID);
+    if (!p) {
+      p = { name: r.PLAYER_NAME, teamId: r.TEAM_ID, gp: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0 };
+      byPlayer.set(r.PLAYER_ID, p);
+    }
+    // Traded mid-season: her leaderboard row belongs to whoever she plays for now.
+    p.teamId = r.TEAM_ID;
+    p.gp++;
+    p.pts += n(r.PTS);
+    p.reb += n(r.OREB) + n(r.DREB);
+    p.ast += n(r.AST);
+    p.stl += n(r.STL);
+    p.blk += n(r.BLK);
+  }
+
+  const qualified = [...byPlayer.values()].filter(
+    (p) => p.gp >= Math.max(1, Math.ceil(LEADER_MIN_SHARE * (gpByTeam.get(p.teamId) || 0)))
+  );
+  const leaders = {};
+  for (const [key] of LEADER_CATS) {
+    leaders[key] = qualified
+      .map((p) => ({ name: p.name, teamId: p.teamId, gp: p.gp, v: r1(p[key] / p.gp) }))
+      .sort((a, b) => b.v - a.v)
+      .slice(0, top);
+  }
+  return leaders;
+}
+
 function buildRoster(playerRows, teamId, idToIndex, meta) {
   const byPlayer = new Map();
   for (const r of playerRows) {
@@ -356,6 +480,264 @@ function shapeLineups(rows) {
     id: r.GROUP_ID, name: cleanLineup(r.GROUP_NAME), gp: n(r.GP), min: r1(r.MIN),
     off: r1(r.OFF_RATING), def: r1(r.DEF_RATING), net: r1(r.NET_RATING),
   })).sort((a, b) => b.min - a.min).slice(0, 8);
+}
+
+// ----- rotations (substitution patterns) -------------------------------------
+// Every other dataset here is one request for the whole league. Rotations are
+// not: `gamerotation` is per game, and it answers with one row per stint —
+// when a player came on, when she came off, and what happened while she was
+// out there. That's the only endpoint that carries substitution timing at all
+// (playbyplayv3 has SUB events, but names the incoming player by surname only,
+// so it would need roster name-matching; gamerotation gives person ids on both
+// sides of the swap).
+//
+// Per game means ~570 requests for a full season against an endpoint that
+// answers a single cold request in ~300ms and then degrades badly under
+// sustained use. Measured from one IP over an afternoon: the first pass ran
+// near 100%, a 44-game pass at 500ms spacing came back 50%, and by the third
+// pass it was under 40% — and 2026 fared consistently worse than 2025 in the
+// same run (1/10 vs 4/10), some of its 500s arriving only after a 30-second
+// server-side timeout. So the failures are part throttling, part the current
+// season being thinner on the backend, and neither is worth fighting inside a
+// single run.
+//
+// The design follows from that: every game is cached to its own file and never
+// refetched, one retry rather than an escalating chain, and whatever fails is
+// simply left for tomorrow. A season fills in over several nights instead of
+// one long run, and no run is unbounded.
+//
+//     public/data/<season>/rotations/<gameId>.json
+//
+// One file per game rather than one per season so a nightly commit adds a few
+// KB instead of rewriting a megabyte, and so the per-game stints stay on disk
+// for anything that wants the game-level timeline later. The site itself only
+// reads the season aggregate this builds into each team's bundle.
+
+const ROTATION_DELAY_MS = 1200; // slower than the rest: this endpoint throttles
+const ROTATION_BACKOFF_MS = [0, 4000]; // one retry; the rest is tomorrow's problem
+// A rotation that is coming back at all comes back in about 300ms. A request
+// still open after eight seconds is one of the server-side stalls that
+// eventually 500s at thirty — waiting out the global timeout for those turns a
+// 20-minute backfill into a multi-hour one, so this step gives up early.
+const ROTATION_TIMEOUT_MS = 8000;
+// The schedule is cut into blocks this size for the "quarter of the season"
+// toggles. A WNBA regular season is 44 games, so eleven is exactly a quarter;
+// a season of a different length just gets a short final block.
+const SEGMENT_GAMES = 11;
+const REGULATION_MIN = 40; // the heat map's x-axis; overtime is counted in the
+                           // per-player totals but has no column of its own
+
+const rotationPath = (dir, season, gameId) =>
+  join(dir, String(season), "rotations", `${gameId}.json`);
+
+/**
+ * One game's stints, in the compact shape that goes to disk. Times are tenths
+ * of a second of elapsed game clock, exactly as the endpoint gives them, so
+ * nothing is lost to rounding here — 0 is tip-off, 24000 the end of regulation.
+ */
+function shapeRotation(json) {
+  const stints = [];
+  const names = {};
+  for (const rs of (json && json.resultSets) || []) {
+    const at = Object.fromEntries(rs.headers.map((h, i) => [h, i]));
+    for (const row of rs.rowSet) {
+      const pid = row[at.PERSON_ID];
+      if (pid == null) continue;
+      names[pid] = `${row[at.PLAYER_FIRST] || ""} ${row[at.PLAYER_LAST] || ""}`.trim();
+      stints.push([
+        row[at.TEAM_ID], pid,
+        row[at.IN_TIME_REAL], row[at.OUT_TIME_REAL],
+        row[at.PLAYER_PTS], row[at.PT_DIFF],
+      ]);
+    }
+  }
+  return stints.length ? { names, stints } : null;
+}
+
+/** A game already on disk, or null if we've never successfully fetched it. */
+async function readRotation(dir, season, gameId) {
+  try {
+    const g = JSON.parse(await readFile(rotationPath(dir, season, gameId), "utf8"));
+    return g && Array.isArray(g.stints) ? g : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Fill in every game of the season not already cached, and return the full set
+ * keyed by game id. Games that fail are simply left out — the next run picks
+ * them up, and a season is useful long before it's complete.
+ */
+async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
+  const byGame = new Map();
+  const missing = [];
+  for (const id of gameIds) {
+    const cached = await readRotation(dir, season, id);
+    if (cached) byGame.set(id, cached);
+    else missing.push(id);
+  }
+
+  const failed = [];
+  for (const [i, id] of missing.entries()) {
+    let game = null;
+    let lastErr = "";
+    for (const wait of ROTATION_BACKOFF_MS) {
+      if (wait) await sleep(wait);
+      try {
+        game = shapeRotation(
+          await statsFetch("gamerotation", { GameID: id, LeagueID: "10" }, { timeoutMs: ROTATION_TIMEOUT_MS })
+        );
+        if (game) break;
+        lastErr = "no stint rows returned";
+      } catch (e) {
+        lastErr = e.message;
+      }
+    }
+    if (game) {
+      await writeJson(rotationPath(dir, season, id), game);
+      byGame.set(id, game);
+    } else {
+      failed.push({ id, error: lastErr });
+    }
+    if (onProgress) onProgress(i + 1, missing.length, failed.length);
+    await sleep(ROTATION_DELAY_MS);
+  }
+
+  return { byGame, cached: gameIds.length - missing.length, fetched: missing.length - failed.length, failed };
+}
+
+/**
+ * Roll a set of one team's games up into a per-player rotation profile.
+ *
+ * `heat[m]` is the share of her own appearances a player was on the floor
+ * during minute m of the game — her availability is divided out, so a starter
+ * who missed a month still reads as a starter rather than as a faint row. The
+ * denominator is on the row as `gp` so a thin sample is visible rather than
+ * implied.
+ *
+ * `games` is [{ stints, names }] — one team's slice of however many games the
+ * caller wants summed, which is what lets the same code do the whole season and
+ * each quarter of it.
+ */
+function summariseRotation(games) {
+  const players = new Map();
+
+  for (const { stints: gameStints, names } of games) {
+    // Group by player first: "appearances" and "did she start" are per player
+    // per game, not per stint.
+    const byPlayer = new Map();
+    for (const [pid, tin, tout, pts, diff] of gameStints) {
+      if (!byPlayer.has(pid)) byPlayer.set(pid, []);
+      byPlayer.get(pid).push({ in: tin / 10, out: tout / 10, pts, diff });
+    }
+
+    for (const [pid, stints] of byPlayer) {
+      if (!players.has(pid)) {
+        players.set(pid, {
+          id: pid, name: names[pid] || String(pid),
+          gp: 0, starts: 0, stints: 0, secs: 0, plus: 0,
+          firstIn: [], lens: [], heat: new Array(REGULATION_MIN).fill(0),
+        });
+      }
+      const p = players.get(pid);
+      p.name = names[pid] || p.name;
+      p.gp++;
+      stints.sort((a, b) => a.in - b.in);
+      if (stints[0].in === 0) p.starts++;
+      else p.firstIn.push(stints[0].in);
+
+      for (const s of stints) {
+        const len = s.out - s.in;
+        if (!(len > 0)) continue; // a zero-length stint is a data artefact, not a shift
+        p.stints++;
+        p.secs += len;
+        p.plus += s.diff || 0;
+        p.lens.push(len);
+        // Spread the stint across the game-minutes it covers. Overtime falls
+        // off the end of `heat` but is still in `secs`, so minutes per game
+        // stays the true number.
+        const from = Math.floor(s.in / 60);
+        const to = Math.min(REGULATION_MIN - 1, Math.floor((s.out - 0.001) / 60));
+        for (let m = Math.max(0, from); m <= to; m++) {
+          p.heat[m] += Math.min(s.out, (m + 1) * 60) - Math.max(s.in, m * 60);
+        }
+      }
+    }
+  }
+
+  return [...players.values()]
+    .filter((p) => p.stints > 0)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      gp: p.gp,
+      starts: p.starts,
+      mpg: r1(p.secs / p.gp / 60),
+      stints: Math.round((p.stints / p.gp) * 100) / 100,
+      avgStint: r1(p.lens.reduce((a, b) => a + b, 0) / p.lens.length / 60),
+      // Average clock time of her first appearance in the games she came off
+      // the bench; null for a player who has never not started.
+      firstIn: p.firstIn.length ? r1(p.firstIn.reduce((a, b) => a + b, 0) / p.firstIn.length / 60) : null,
+      plus: r1(p.plus / p.gp),
+      heat: p.heat.map((s) => Math.round((s / (60 * p.gp)) * 100)),
+    }))
+    .sort((a, b) => b.mpg - a.mpg);
+}
+
+/**
+ * Collapse a season of stints into one rotation profile per team, plus the same
+ * profile recomputed over each quarter of the schedule.
+ *
+ * A rotation is not one fact about a season — it's the thing a coach spends the
+ * season changing. So alongside the whole-season view, the schedule is cut into
+ * SEGMENT_GAMES-game blocks and each is summarised separately, which is what
+ * makes a starter's promotion or a veteran's fade visible instead of averaged
+ * away.
+ *
+ * Blocks are cut on each team's own chronological schedule position
+ * (`orderByTeam`), not on the games we happen to hold rotation data for — so
+ * "games 1-11" always means the season's first eleven, and a block with gaps
+ * reports a smaller `games` rather than silently pulling in the twelfth.
+ */
+function aggregateRotations(byGame, teamIds, orderByTeam, segmentSize = SEGMENT_GAMES) {
+  // Split every game's stints by team once, so each team only walks its own.
+  const perTeamGame = new Map(teamIds.map((id) => [id, new Map()]));
+  for (const [gameId, game] of byGame) {
+    for (const [teamId, pid, tin, tout, pts, diff] of game.stints) {
+      const teamGames = perTeamGame.get(teamId);
+      if (!teamGames) continue; // a team not in this season's league (shouldn't happen)
+      if (!teamGames.has(gameId)) teamGames.set(gameId, { stints: [], names: game.names });
+      teamGames.get(gameId).stints.push([pid, tin, tout, pts, diff]);
+    }
+  }
+
+  const out = new Map();
+  for (const [teamId, teamGames] of perTeamGame) {
+    if (!teamGames.size) continue;
+    const order = orderByTeam.get(teamId) || [...teamGames.keys()];
+
+    const all = summariseRotation([...teamGames.values()]);
+
+    // One block per SEGMENT_GAMES games of the schedule, including blocks we
+    // hold no data for yet — the UI shows those as an empty quarter, which is
+    // the honest answer rather than a missing button.
+    const segments = [];
+    for (let start = 0; start < order.length; start += segmentSize) {
+      const slice = order.slice(start, start + segmentSize);
+      const held = slice.map((id) => teamGames.get(id)).filter(Boolean);
+      segments.push({
+        from: start + 1,
+        to: start + slice.length,
+        scheduled: slice.length,
+        games: held.length,
+        players: held.length ? summariseRotation(held) : [],
+      });
+    }
+
+    out.set(teamId, { games: teamGames.size, scheduled: order.length, segmentSize, players: all, segments });
+  }
+  return out;
 }
 
 // ----- previous-snapshot fallback --------------------------------------------
@@ -510,6 +892,10 @@ async function updateIndex(dir, payload) {
 // carry over. Zero means the season is complete and --repair can skip it.
 function countMissing(payload) {
   const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"];
+  // `rotation` is deliberately not here. It fills in over several nights rather
+  // than in one run (see the rotations section), and the seasons before it was
+  // added have none at all — counting it would mark every season permanently
+  // incomplete and send --repair back to refetch archives that are in fact fine.
   const TEAM_KEYS = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
   let missing = LEAGUE_KEYS.filter((k) => isEmpty(payload[k])).length;
   for (const bundle of Object.values(payload.data)) {
@@ -525,7 +911,7 @@ function countMissing(payload) {
  * `final` marks a completed season: no schedule to look ahead at, and anything
  * reused from an earlier fetch is simply correct rather than stale.
  */
-async function fetchSeason(season, { outDir, final, nth, of }) {
+async function fetchSeason(season, { outDir, final, nth, of, rotations = true }) {
   const startedAt = Date.now();
   const which = of > 1 ? `  [season ${nth} of ${of}]` : "";
   console.log(`\n${"─".repeat(64)}\n${season}${final ? " (completed season)" : " (season in progress)"}${which}\n`);
@@ -709,6 +1095,9 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   // ----- schedule → each team's upcoming (not-yet-played) games -----
   // A completed season has nothing upcoming, so that request is simply skipped.
   const upcomingByTeam = new Map();
+  // The league-wide slate around today — what the home page's scoreboard reads.
+  // Both halves come out of the same response as `upcoming`.
+  let scoreboard = [];
   let scheduleErr = null;
   if (!final) {
   step("schedule");
@@ -727,14 +1116,43 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
         oppNet: netByTeam.has(oppId) ? netByTeam.get(oppId) : null,
       };
     };
+    // The scoreboard's window. Bounded on both sides on purpose: the home page
+    // only ever shows the days around today, and the whole 350-game schedule
+    // would be ~45KB in a file every page of the site downloads. A team's full
+    // remaining schedule still lives in its own file, as `upcoming`.
+    const from = Date.now() - SCOREBOARD_BACK_DAYS * 86400000;
+    const to = Date.now() + SCOREBOARD_FWD_DAYS * 86400000;
+
     let count = 0;
     for (const gd of gameDates) {
       for (const g of gd.games || []) {
-        if (g.gameStatus !== 1) continue; // 1 = scheduled, 2 = live, 3 = final
         const ts = Date.parse(g.gameDateEst || g.gameDateTimeEst || gd.gameDate);
-        if (Number.isFinite(ts) && ts < cutoff) continue;
         const home = g.homeTeam, away = g.awayTeam;
         if (!home || !away) continue;
+
+        // --- the league-wide slate around today ---
+        // Keyed by the ET calendar date the WNBA schedules against, so the app
+        // can ask "what's on today?" in the league's own timezone rather than
+        // the visitor's. `tip` is the real kickoff instant, for local times.
+        if (Number.isFinite(ts) && ts >= from && ts <= to) {
+          scoreboard.push({
+            id: g.gameId,
+            date: String(g.gameDateEst || gd.gameDate).slice(0, 10),
+            tip: g.gameDateTimeUTC || null,
+            status: g.gameStatus, // 1 = scheduled, 2 = live, 3 = final
+            statusText: g.gameStatusText || "",
+            home: home.teamId,
+            away: away.teamId,
+            homeScore: g.gameStatus === 1 ? null : n(home.score),
+            awayScore: g.gameStatus === 1 ? null : n(away.score),
+            tv: (g.broadcasters?.nationalBroadcasters || [])
+              .map((b) => b.broadcasterDisplay).filter(Boolean)[0] || null,
+          });
+        }
+
+        // --- each team's own upcoming list ---
+        if (g.gameStatus !== 1) continue; // 1 = scheduled, 2 = live, 3 = final
+        if (Number.isFinite(ts) && ts < cutoff) continue;
         const date = fmtDate(g.gameDateEst || gd.gameDate);
         const sortTs = Number.isFinite(ts) ? ts : 0;
         const hList = upcomingByTeam.get(home.teamId) || [];
@@ -750,7 +1168,8 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
       list.sort((a, b) => a.ts - b.ts);
       list.forEach((x) => delete x.ts); // sorting key only; keep the JSON tidy
     }
-    done(`${count} upcoming games`);
+    scoreboard.sort((a, b) => (a.date === b.date ? String(a.tip).localeCompare(String(b.tip)) : a.date.localeCompare(b.date)));
+    done(`${count} upcoming games · ${scoreboard.length} on the scoreboard`);
   } catch (e) {
     scheduleErr = e.message;
     done(`FAILED — ${e.message}`);
@@ -827,6 +1246,11 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   // fallback below can tell "no data" apart from "genuinely zero attempts".
   const leagueShotZones = teamZoneRows.length ? [...leagueZoneAgg.values()] : [];
 
+  // League standings and the league leaderboard — what the home page opens on.
+  // Both are rollups of rows already fetched, so neither costs a request.
+  const standings = buildStandings(teamRows, teamIds, rowsByGame, scoreOf);
+  const leaders = buildLeaders(playerRows, new Map(standings.map((t) => [t.teamId, t.gp])));
+
   // League-wide win% + zone shooting per team, for the "shooting profile vs
   // winning" scatter on the Team tab (does shot selection track with winning?).
   const teamZoneWins = teamIds
@@ -846,6 +1270,59 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
   // zone baselines (guards vs forwards) so a player's shot profile is compared
   // against peers at the same position rather than the whole league.
   const playerPosById = new Map();
+
+  // ----- rotations (one request per game, cached forever) -----
+  // Anything already on disk is reused, so this is a long one-off backfill the
+  // first time a season is fetched and a handful of requests every night after.
+  let rotationByTeam = new Map();
+  let rotationErr = null;
+  if (rotations) {
+    const gameIds = [...rowsByGame.keys()];
+    begin(`  • ${season} rotations … `);
+    try {
+      const res = await fetchRotations(outDir, season, gameIds, {
+        onProgress: (done_, total, failed) => {
+          const note = `fetching ${done_}/${total}${failed ? ` (${failed} failed)` : ""}`;
+          if (TTY) {
+            process.stdout.write(`\r  • ${season} rotations … ${note}${CLEAR_EOL}`);
+          } else if (done_ % 50 === 0 || done_ === total) {
+            // No ticker without a terminal, and this step can run for twenty
+            // minutes — CI needs to see it's alive, so it gets a line per 50.
+            console.log(`      ${season} rotations … ${note}`);
+          }
+        },
+      });
+      // Each team's schedule in date order — the same sort buildGames uses, so
+      // a block boundary here lands on the same game the Results table calls
+      // number 11. Unplayed games have no rotation rows, so they can't shift a
+      // boundary by sitting in the list.
+      const orderByTeam = new Map(
+        teamIds.map((tid) => [
+          tid,
+          teamRows
+            .filter((r) => r.TEAM_ID === tid)
+            .sort((a, b) => (a.GAME_DATE < b.GAME_DATE ? -1 : 1))
+            .map((r) => r.GAME_ID),
+        ])
+      );
+      rotationByTeam = aggregateRotations(res.byGame, teamIds, orderByTeam);
+      const bits = [`${res.byGame.size}/${gameIds.length} games`];
+      if (res.cached) bits.push(`${res.cached} cached`);
+      if (res.fetched) bits.push(`${res.fetched} new`);
+      if (res.failed.length) bits.push(`${res.failed.length} failed — will retry next run`);
+      done(bits.join(" · "));
+      if (res.failed.length) {
+        // One line, not one per game: this endpoint fails in clusters and the
+        // pattern (all of them, or three of two hundred) is what matters.
+        const reasons = [...new Set(res.failed.map((f) => f.error))].slice(0, 3);
+        console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons.join(" / ")}`);
+      }
+      if (!res.byGame.size) rotationErr = "No games returned rotation data.";
+    } catch (e) {
+      abandon();
+      rotationErr = e.message;
+    }
+  }
 
   // ----- per-team loops (roster, on/off, lineups) -----
   console.log(`Per-team data for ${season} (roster · on/off · lineups) — ${teamIds.length} teams, 3 requests each:`);
@@ -926,7 +1403,10 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
 
     teams.push({ id: teamId, name: fullName, city, teamName, abbr, emoji });
     const upcoming = upcomingByTeam.get(teamId) || [];
-    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, upcoming, errors };
+    const rotation = rotationByTeam.get(teamId) || null;
+    if (!rotation && rotations) errors.rotation = rotationErr || "No rotation data for this team yet.";
+
+    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, rotation, upcoming, errors };
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
@@ -949,13 +1429,17 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
       }
     }
 
-    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
+    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "rotation"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
     Object.assign(stale, carryOver(bundle, prevBundle, fallbackKeys, {
       prevAt, prevStale, expired, final,
-      errors: { ...errors, upcoming: scheduleErr },
+      errors: {
+        ...errors,
+        upcoming: scheduleErr,
+        rotation: rotations ? errors.rotation : "rotations were skipped this run (--no-rotations)",
+      },
     }));
     if (Object.keys(stale).length) bundle.stale = stale;
     data[teamId] = bundle;
@@ -1008,20 +1492,32 @@ async function fetchSeason(season, { outDir, final, nth, of }) {
     : null; // null, not zeroes — see leagueShotZones above
 
   // Back-fill the rest of the league-wide sets (the ranking was done above).
-  Object.assign(league, { teamProfiles, leagueShotZones, positionShotZones, teamZoneWins });
+  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins });
   Object.assign(
     leagueStale,
-    carryOver(league, prev, ["teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"], {
-      prevAt,
-      prevStale: (prev && prev.stale) || {},
-      expired, final,
-      errors: {
-        teamProfiles: errLeague.profiles,
-        leagueShotZones: errLeague.teamShotZones,
-        positionShotZones: errLeague.playerShotZones,
-        teamZoneWins: errLeague.teamShotZones,
-      },
-    })
+    carryOver(
+      league,
+      prev,
+      [
+        "teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins", "leaders",
+        // A completed season has no slate to show, so an empty scoreboard is the
+        // right answer there rather than something to back-fill.
+        ...(final ? [] : ["scoreboard"]),
+      ],
+      {
+        prevAt,
+        prevStale: (prev && prev.stale) || {},
+        expired, final,
+        errors: {
+          teamProfiles: errLeague.profiles,
+          leagueShotZones: errLeague.teamShotZones,
+          positionShotZones: errLeague.playerShotZones,
+          teamZoneWins: errLeague.teamShotZones,
+          leaders: playerLogErr,
+          scoreboard: scheduleErr,
+        },
+      }
+    )
   );
 
   const payload = {
@@ -1116,7 +1612,7 @@ function parseSeasonRange(text) {
 }
 
 function parseArgs(argv) {
-  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR };
+  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--season" || arg === "--seasons") {
@@ -1128,6 +1624,8 @@ function parseArgs(argv) {
       opts.mode = "repair";
     } else if (arg === "--out") {
       opts.outDir = argv[++i];
+    } else if (arg === "--no-rotations") {
+      opts.rotations = false;
     } else if (arg === "--all") {
       opts.seasons = parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
       opts.mode = "explicit";
@@ -1181,7 +1679,9 @@ async function main() {
     // Only the season in progress can change; everything before it is history.
     const final = season < CURRENT_SEASON;
     try {
-      const entry = await fetchSeason(season, { outDir: opts.outDir, final, nth: i + 1, of: seasons.length });
+      const entry = await fetchSeason(season, {
+        outDir: opts.outDir, final, nth: i + 1, of: seasons.length, rotations: opts.rotations,
+      });
       if (entry.failed) degraded.push({ season, failed: entry.failed, missing: entry.missing });
     } catch (e) {
       // One bad season must not abandon the rest of a 10-season backfill.
@@ -1220,8 +1720,14 @@ async function main() {
   console.log("");
 }
 
-main().catch((e) => {
-  abandon();
-  console.error(`\nFatal: ${e.message}\n`);
-  process.exit(1);
-});
+// Only run when invoked as a command. Importing this file (the rotation tests
+// do) should not kick off a fetch.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((e) => {
+    abandon();
+    console.error(`\nFatal: ${e.message}\n`);
+    process.exit(1);
+  });
+}
+
+export { shapeRotation, aggregateRotations, summariseRotation, REGULATION_MIN, SEGMENT_GAMES };

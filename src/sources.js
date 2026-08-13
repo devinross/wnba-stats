@@ -39,6 +39,29 @@ const SOURCES = {
     formula: "Shown as published. 2P is the only arithmetic — FGA minus 3PA, both counted.",
   }),
 
+  // Both of these are rollups of the team / player game logs rather than a
+  // published table, so they point at the game-log pages they're summed from.
+  standings: ({ season }) => ({
+    label: "Teams · Box Scores (game by game)",
+    url: `${STATS_HOST}/teams/boxscores-traditional/?${qs(SEASON(season))}`,
+    formula:
+      "Ours, from every team's game log: W-L, points for and against per game, last 10, current streak, " +
+      "and games behind the leader on the usual half-game basis. Regular season only.",
+  }),
+
+  leaders: ({ season }) => ({
+    label: "Players · Traditional (per game)",
+    url: `${STATS_HOST}/players/traditional/?${qs({ ...SEASON(season), PerMode: "PerGame" })}`,
+    formula:
+      "Ours, from the player game log. Qualified players only — a player has to have appeared in 70% of " +
+      "her team's games to be listed, which is the WNBA's own leaderboard cutoff.",
+  }),
+
+  scoreboard: () => ({
+    label: "WNBA schedule",
+    url: "https://www.wnba.com/schedule",
+  }),
+
   fourFactors: ({ season }) => ({
     label: "Teams · Four Factors",
     url: `${STATS_HOST}/teams/four-factors/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,
@@ -154,6 +177,18 @@ const SOURCES = {
     })}`,
   }),
 
+  // The only per-game dataset on the site. There is no season-level page to
+  // link to — wnba.com serves rotations one game at a time — so this points at
+  // the team's game list, which is where you'd click through to check one.
+  rotation: ({ season, teamId }) => ({
+    label: "Team · Box Scores (rotations, game by game)",
+    url: `${STATS_HOST}/team/${teamId}/boxscores-traditional/?${qs(SEASON(season))}`,
+    formula:
+      "Ours. Every game's substitution log (each player's in/out clock times) summed across the " +
+      "season: shading is her on-court seconds in that minute ÷ 60 × the games she appeared in. " +
+      "Minutes per game include overtime; the 40 columns don't.",
+  }),
+
   upcoming: () => ({
     label: "WNBA schedule",
     url: "https://www.wnba.com/schedule",
@@ -165,7 +200,7 @@ const SOURCES = {
 // a minifier would rewrite.
 const TEAM_SCOPED = new Set([
   "games", "roster", "teamShooting", "scoringShare",
-  "playerAdv", "playerLog", "playerShotZones", "onOff", "lineups",
+  "playerAdv", "playerLog", "playerShotZones", "onOff", "lineups", "rotation",
 ]);
 
 /**
