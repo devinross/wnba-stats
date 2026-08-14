@@ -136,6 +136,28 @@ const TEAM_DASH = (season) => ({ ...DASH_COMMON(season), PlayerExperience: "", P
 const PLAYER_DASH = (season) => ({ ...TEAM_DASH(season), College: "", Country: "", DraftPick: "", DraftYear: "", Height: "", Weight: "" });
 const LINEUP_DASH = (season) => ({ ...DASH_COMMON(season), GroupQuantity: "5", GameID: "" });
 
+// Every attempt in the season, one row each, with the ACTION_TYPE label that
+// shapeShotTypes buckets. ContextMeasure=FGA is what makes it return misses as
+// well as makes — without it the whole breakdown would read as 100%.
+const SHOT_CHART = (season) => ({
+  LeagueID: "10", Season: String(season), SeasonType: "Regular Season",
+  PlayerID: "0", TeamID: "0", GameID: "", ContextMeasure: "FGA",
+  PlayerPosition: "", Outcome: "", Location: "", Month: "0", SeasonSegment: "",
+  DateFrom: "", DateTo: "", OpponentTeamID: "0", VsConference: "", VsDivision: "",
+  RookieYear: "", Period: "0", LastNGames: "0", ContextFilter: "", StartPeriod: "",
+  EndPeriod: "", StartRange: "", EndRange: "", RangeType: "", AheadBehind: "",
+  ClutchTime: "", PointDiff: "", GameSegment: "",
+});
+
+const DEFEND = (season, category) => ({
+  LeagueID: "10", Season: String(season), SeasonType: "Regular Season",
+  PerMode: "Totals", DefenseCategory: category, TeamID: "0",
+  Conference: "", Division: "", PlayerExperience: "", PlayerPosition: "",
+  StarterBench: "", Outcome: "", Location: "", Month: "0", SeasonSegment: "",
+  DateFrom: "", DateTo: "", OpponentTeamID: "0", VsConference: "", VsDivision: "",
+  PORound: "0", GameSegment: "", Period: "0", LastNGames: "0",
+});
+
 // ----- fetch + parse helpers -------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -256,6 +278,147 @@ function shapeShotZones(json, idFields) {
     }));
     return o;
   });
+}
+
+// ----- shot action types -----------------------------------------------------
+// stats.wnba.com has no Synergy play-type data (`synergyplaytypes` answers 200
+// with zero rows for LeagueID=10, as do the whole tracking family:
+// leaguedashplayerptshot, leaguedashptstats, playerdashptpass, and the hustle
+// stats that carry screen assists). What it does have is `shotchartdetail`,
+// which labels every attempt with an ACTION_TYPE — "Pullup Jump shot",
+// "Cutting Layup Shot", "Step Back Jump shot", "Putback Layup Shot" and 33
+// others. Those labels describe how the shot was created, so bucketing them
+// gets most of the way to a play-type breakdown off a single request.
+//
+// What this can and cannot answer, so nobody reads more into it than it holds:
+// spot-ups, cuts, putbacks and post-ups are close to honest — cuts and putbacks
+// are labelled by the API rather than inferred. Pick-and-roll is NOT here. No
+// feed records screens (the string "screen" never appears in play-by-play), so
+// `pull3`/`pull2` mean "off the dribble", which is a P&R ball handler mixed in
+// with isolations, and there is no roll-man bucket at all.
+//
+// Ten buckets, matched in order — the first pattern that hits wins, so the
+// specific ones (cut, putback) come before the generic ones (rim, spot). Every
+// action type lands somewhere; `other` exists so a label the API adds later is
+// visibly uncategorised rather than silently dropped.
+const SHOT_TYPES = [
+  ["putback", /Putback|^Tip /i],           // second-chance finishes off an offensive board
+  ["cut", /Cutting|Alley Oop/i],           // moving to the rim off a pass — the closest thing to a roll
+  ["post", /Hook|Turnaround|Fadeaway/i],   // back-to-basket footwork
+  ["float", /Floating/i],                  // floaters and runners in the lane
+  ["pull", /Pullup|Pull-Up|Step Back|Running Jump/i], // off the dribble (split 2/3 below)
+  ["drive", /Driving|Running .*Layup|Finger Roll|Reverse Layup/i], // attacking off the bounce
+  ["rim", /Layup/i],                       // plain layups with no other qualifier
+  ["spot", /Jump/i],                       // caught and shot (split 2/3 below)
+];
+
+// `pull` and `spot` are the two buckets where the shot's distance changes what
+// it means — a caught-and-shot three is a very different skill from a caught-
+// and-shot mid-range — so each splits into a 2PT and a 3PT variant. The rest
+// are close-range by nature and stay whole.
+const SPLIT_BY_DISTANCE = new Set(["pull", "spot"]);
+
+function classifyShot(actionType, shotType) {
+  const hit = SHOT_TYPES.find(([, re]) => re.test(String(actionType)));
+  if (!hit) return "other";
+  const [key] = hit;
+  if (!SPLIT_BY_DISTANCE.has(key)) return key;
+  return String(shotType).startsWith("3") ? `${key}3` : `${key}2`;
+}
+
+// Roll `shotchartdetail`'s one-row-per-attempt into per-player, per-team and
+// league-wide tallies. Buckets with no attempts are dropped rather than kept as
+// zeroes: most players only ever touch half of them, and the team files are
+// downloaded by the browser.
+function shapeShotTypes(json) {
+  const set = (json.resultSets || []).find((s) => s && s.name === "Shot_Chart_Detail");
+  if (!set || !set.rowSet) return { byPlayer: new Map(), byTeam: new Map(), league: [] };
+  const H = Object.fromEntries(set.headers.map((h, i) => [h, i]));
+
+  const bump = (map, id, key, made) => {
+    if (!map.has(id)) map.set(id, new Map());
+    const buckets = map.get(id);
+    const e = buckets.get(key) || { t: key, m: 0, a: 0 };
+    e.a++; e.m += made;
+    buckets.set(key, e);
+  };
+  const byPlayer = new Map();
+  const byTeam = new Map();
+  const league = new Map();
+
+  for (const row of set.rowSet) {
+    const key = classifyShot(row[H.ACTION_TYPE], row[H.SHOT_TYPE]);
+    const made = n(row[H.SHOT_MADE_FLAG]);
+    bump(byPlayer, row[H.PLAYER_ID], key, made);
+    bump(byTeam, row[H.TEAM_ID], key, made);
+    bump(league, 0, key, made);
+  }
+
+  // Sort each player's buckets by volume so the UI can render them in order
+  // without re-sorting, and the biggest part of a player's diet reads first.
+  const flatten = (map) =>
+    new Map([...map].map(([id, buckets]) => [id, [...buckets.values()].sort((a, b) => b.a - a.a)]));
+
+  return {
+    byPlayer: flatten(byPlayer),
+    byTeam: flatten(byTeam),
+    league: [...(league.get(0) || new Map()).values()].sort((a, b) => b.a - a.a),
+  };
+}
+
+// ----- defensive matchups ----------------------------------------------------
+// `leaguedashptdefend` is the one tracking endpoint that WNBA data populates: it
+// gives, per defender, the FG% shooters managed with her as the closest
+// defender, next to what those same shooters normally shoot (NORMAL_FG_PCT).
+// The gap between the two is the stat worth having — raw FG% allowed mostly
+// measures who a defender happens to guard.
+//
+// One request per category rather than one per player: the per-player form
+// (`playerdashptshotdefend`) needs ~180 calls a season against an endpoint that
+// throttles, and this returns the same numbers for the whole league in six.
+//
+// Tracking only goes back to 2023. Earlier seasons answer with zero rows, which
+// is correct rather than broken — see DEFEND_FIRST_SEASON.
+const DEFEND_CATEGORIES = [
+  ["Overall", "all"],
+  ["3 Pointers", "3pt"],
+  ["2 Pointers", "2pt"],
+  ["Less Than 6Ft", "lt6"],
+  ["Less Than 10Ft", "lt10"],
+  ["Greater Than 15Ft", "gt15"],
+];
+
+// The first season with closest-defender tracking. Anything earlier has no
+// defensive matchup data at all, so the fetch skips the requests instead of
+// spending six round trips to be told nothing.
+const DEFEND_FIRST_SEASON = 2023;
+
+function shapeDefend(rowsByCategory) {
+  const byPlayer = new Map();
+  for (const [key, rows] of rowsByCategory) {
+    for (const r of rows) {
+      const id = r.CLOSE_DEF_PERSON_ID;
+      if (id == null) continue;
+      if (!byPlayer.has(id)) byPlayer.set(id, []);
+      byPlayer.get(id).push({
+        c: key,
+        gp: n(r.GP),
+        freq: pctOf(r.FREQ),
+        fgm: n(r.D_FGM),
+        fga: n(r.D_FGA),
+        // Allowed, expected, and the difference — negative means shooters did
+        // worse than usual against her, which is the direction that is good.
+        pct: pctOf(r.D_FG_PCT),
+        normPct: pctOf(r.NORMAL_FG_PCT),
+        diff: pctOf(r.PCT_PLUSMINUS),
+      });
+    }
+  }
+  // Keep the categories in DEFEND_CATEGORIES order regardless of which request
+  // came back first, so every player's row reads the same way.
+  const order = new Map(DEFEND_CATEGORIES.map(([, key], i) => [key, i]));
+  for (const list of byPlayer.values()) list.sort((a, b) => order.get(a.c) - order.get(b.c));
+  return byPlayer;
 }
 
 function toObjects(json, name) {
@@ -524,6 +687,12 @@ const ROTATION_TIMEOUT_MS = 8000;
 // toggles. A WNBA regular season is 44 games, so eleven is exactly a quarter;
 // a season of a different length just gets a short final block.
 const SEGMENT_GAMES = 11;
+// A hard ceiling on time spent fetching new rotations in one run. With most
+// games failing, 167 attempts × (timeout + backoff) ran well over an hour —
+// fine on a laptop, not fine in a nightly job that has to finish. Whatever is
+// left when the budget runs out is simply next run's work, which is how this
+// step already treats failures.
+const ROTATION_BUDGET_MS = 10 * 60 * 1000;
 const REGULATION_MIN = 40; // the heat map's x-axis; overtime is counted in the
                            // per-player totals but has no column of its own
 
@@ -579,7 +748,13 @@ async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
   }
 
   const failed = [];
+  const deadline = Date.now() + ROTATION_BUDGET_MS;
+  let ranOut = 0;
   for (const [i, id] of missing.entries()) {
+    if (Date.now() > deadline) {
+      ranOut = missing.length - i;
+      break;
+    }
     let game = null;
     let lastErr = "";
     for (const wait of ROTATION_BACKOFF_MS) {
@@ -604,7 +779,13 @@ async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
     await sleep(ROTATION_DELAY_MS);
   }
 
-  return { byGame, cached: gameIds.length - missing.length, fetched: missing.length - failed.length, failed };
+  return {
+    byGame,
+    cached: gameIds.length - missing.length,
+    fetched: missing.length - failed.length - ranOut,
+    failed,
+    ranOut,
+  };
 }
 
 /**
@@ -891,12 +1072,16 @@ async function updateIndex(dir, payload) {
 // Datasets that would render as "unavailable" — nothing fetched and nothing to
 // carry over. Zero means the season is complete and --repair can skip it.
 function countMissing(payload) {
-  const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins"];
+  const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "teamZoneWins"];
   // `rotation` is deliberately not here. It fills in over several nights rather
   // than in one run (see the rotations section), and the seasons before it was
   // added have none at all — counting it would mark every season permanently
   // incomplete and send --repair back to refetch archives that are in fact fine.
-  const TEAM_KEYS = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones"];
+  // `shotDefend` is deliberately absent for the same reason as `rotation`: it
+  // lives on roster entries rather than as a bundle key, and the seasons before
+  // 2023 have no closest-defender tracking at all, so counting it would mark
+  // every archived season permanently incomplete.
+  const TEAM_KEYS = ["games", "roster", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes"];
   let missing = LEAGUE_KEYS.filter((k) => isEmpty(payload[k])).length;
   for (const bundle of Object.values(payload.data)) {
     missing += TEAM_KEYS.filter((k) => isEmpty(bundle[k])).length;
@@ -934,7 +1119,9 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
   // season has no schedule to look ahead at, hence one fewer.
   const LEAGUE_REQUESTS = [
     "team game log", "player game log", "ratings", "playeradv", "profiles",
-    "factors", "teamShotZones", "playerShotZones",
+    "factors", "teamShotZones", "playerShotZones", "shotTypes",
+    // Six requests behind one label, and only for seasons that have tracking.
+    ...(season >= DEFEND_FIRST_SEASON ? ["shotDefend"] : []),
     ...(final ? [] : ["schedule"]),
   ];
   let stepNo = 0;
@@ -1035,6 +1222,53 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     { ...PLAYER_DASH(season), MeasureType: "Base", PerMode: "Totals", DistanceRange: "By Zone", TeamID: "0" },
     ["PLAYER_ID", "PLAYER_NAME"]
   );
+
+  // Shot action types. One request covers the season for every player and team
+  // at once (~35k rows, ~9MB), so this is by far the cheapest dataset here per
+  // unit of detail — but it is also the biggest response, hence the longer
+  // timeout.
+  let shotTypes = { byPlayer: new Map(), byTeam: new Map(), league: [] };
+  step("shotTypes");
+  try {
+    shotTypes = shapeShotTypes(await statsFetch("shotchartdetail", SHOT_CHART(season), { timeoutMs: 60000 }));
+    if (!shotTypes.league.length) throw new Error("no shots returned");
+    const total = shotTypes.league.reduce((a, b) => a + b.a, 0);
+    done(`${total} shots · ${shotTypes.byPlayer.size} players`);
+  } catch (e) {
+    done(`FAILED — ${e.message}`);
+    errLeague.shotTypes = e.message;
+  }
+  await sleep(DELAY_BETWEEN_CALLS_MS);
+
+  // Defensive matchups, six requests (one per shot category). Seasons before
+  // closest-defender tracking existed are skipped outright — the requests would
+  // succeed and return nothing, which reads as a failure in the log and sends
+  // --repair back to retry them every night.
+  let defendByPlayer = new Map();
+  if (season >= DEFEND_FIRST_SEASON) {
+    step("shotDefend");
+    const collected = [];
+    const failures = [];
+    for (const [category, key] of DEFEND_CATEGORIES) {
+      try {
+        collected.push([key, toObjects(await statsFetch("leaguedashptdefend", DEFEND(season, category)), "LeagueDashPTDefend")]);
+      } catch (e) {
+        failures.push(`${category}: ${e.message}`);
+      }
+      await sleep(DELAY_BETWEEN_CALLS_MS);
+    }
+    defendByPlayer = shapeDefend(collected);
+    if (!defendByPlayer.size) {
+      const why = failures.length ? failures.join("; ") : "no rows returned";
+      done(`FAILED — ${why}`);
+      errLeague.shotDefend = why;
+    } else {
+      // A partial answer is still worth keeping: a player with five of six
+      // categories is more useful than none, as long as the log says so.
+      done(`${defendByPlayer.size} defenders · ${collected.length}/${DEFEND_CATEGORIES.length} categories`
+        + (failures.length ? ` · missed ${failures.length}` : ""));
+    }
+  }
 
   // ----- indexes -----
   const abbrById = new Map();
@@ -1310,6 +1544,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
       if (res.cached) bits.push(`${res.cached} cached`);
       if (res.fetched) bits.push(`${res.fetched} new`);
       if (res.failed.length) bits.push(`${res.failed.length} failed — will retry next run`);
+      if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(ROTATION_BUDGET_MS / 60000)}min budget)`);
       done(bits.join(" · "));
       if (res.failed.length) {
         // One line, not one per game: this endpoint fails in clusters and the
@@ -1373,7 +1608,14 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     await sleep(DELAY_BETWEEN_CALLS_MS);
 
     const roster = buildRoster(playerRows, teamId, idToIndex, meta);
-    for (const p of roster) p.shotZones = shotZonesByPlayer.get(p.playerId) || null;
+    for (const p of roster) {
+      p.shotZones = shotZonesByPlayer.get(p.playerId) || null;
+      p.shotTypes = shotTypes.byPlayer.get(p.playerId) || null;
+      // Null rather than [] for a player with no defensive rows: she may simply
+      // never have been the closest defender on a tracked attempt, and the UI
+      // needs to tell that apart from "this season has no tracking at all".
+      p.shotDefend = defendByPlayer.get(p.playerId) || null;
+    }
 
     // on/off
     let onOff = [];
@@ -1401,12 +1643,15 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     const shotZones = shotZonesByTeam.get(teamId) || null;
     if (!shotZones && errLeague.teamShotZones) errors.shotZones = errLeague.teamShotZones;
 
+    const teamShotTypes = shotTypes.byTeam.get(teamId) || null;
+    if (!teamShotTypes && errLeague.shotTypes) errors.shotTypes = errLeague.shotTypes;
+
     teams.push({ id: teamId, name: fullName, city, teamName, abbr, emoji });
     const upcoming = upcomingByTeam.get(teamId) || [];
     const rotation = rotationByTeam.get(teamId) || null;
     if (!rotation && rotations) errors.rotation = rotationErr || "No rotation data for this team yet.";
 
-    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, rotation, upcoming, errors };
+    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, upcoming, errors };
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
@@ -1429,7 +1674,25 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
       }
     }
 
-    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "rotation"];
+    // Per-player shot types and defensive matchups hang off roster entries, so
+    // the whole-dataset carryOver below can't reach them: a night where the
+    // player game log succeeds but shotchartdetail fails produces a fresh roster
+    // with every breakdown nulled out. Back-fill those two fields player by
+    // player from the last snapshot instead, keyed by id so a roster that
+    // changed between runs still lines up.
+    for (const [key, failed] of [["shotTypes", errLeague.shotTypes], ["shotDefend", errLeague.shotDefend]]) {
+      if (!failed || !prevBundle) continue;
+      const prevById = new Map((prevBundle.roster || []).map((p) => [p.playerId, p[key]]));
+      let kept = 0;
+      for (const p of bundle.roster) {
+        if (p[key] || !prevById.get(p.playerId)) continue;
+        p[key] = prevById.get(p.playerId);
+        kept++;
+      }
+      if (kept) stale[key] = { at: prevAt, reason: failed };
+    }
+
+    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
@@ -1491,15 +1754,20 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     ? { G: [...posAgg.G.values()], F: [...posAgg.F.values()] }
     : null; // null, not zeroes — see leagueShotZones above
 
+  // League-wide action-type totals: the baseline a player's own breakdown is
+  // read against, since "44% on spot-up threes" only means something next to
+  // what the league shoots on them.
+  const leagueShotTypes = shotTypes.league;
+
   // Back-fill the rest of the league-wide sets (the ranking was done above).
-  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins });
+  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, teamZoneWins });
   Object.assign(
     leagueStale,
     carryOver(
       league,
       prev,
       [
-        "teamProfiles", "leagueShotZones", "positionShotZones", "teamZoneWins", "leaders",
+        "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "teamZoneWins", "leaders",
         // A completed season has no slate to show, so an empty scoreboard is the
         // right answer there rather than something to back-fill.
         ...(final ? [] : ["scoreboard"]),
@@ -1511,6 +1779,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
         errors: {
           teamProfiles: errLeague.profiles,
           leagueShotZones: errLeague.teamShotZones,
+          leagueShotTypes: errLeague.shotTypes,
           positionShotZones: errLeague.playerShotZones,
           teamZoneWins: errLeague.teamShotZones,
           leaders: playerLogErr,
