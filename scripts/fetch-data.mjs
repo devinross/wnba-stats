@@ -308,9 +308,15 @@ const SHOT_TYPES = [
   ["float", /Floating/i],                  // floaters and runners in the lane
   ["pull", /Pullup|Pull-Up|Step Back|Running Jump/i], // off the dribble (split 2/3 below)
   ["drive", /Driving|Running .*Layup|Finger Roll|Reverse Layup/i], // attacking off the bounce
-  ["rim", /Layup/i],                       // plain layups with no other qualifier
+  ["rim", /Layup|Dunk/i],                  // plain layups and dunks, no other qualifier
   ["spot", /Jump/i],                       // caught and shot (split 2/3 below)
 ];
+
+// Rows that aren't a shot. "No Shot" turns up a handful of times in the older
+// archives (eight in 2017, none since) attached to goaltending and similar
+// oddities; counting them would quietly pad a player's attempts with events she
+// never took.
+const NON_SHOT = /^No Shot$/i;
 
 // `pull` and `spot` are the two buckets where the shot's distance changes what
 // it means — a caught-and-shot three is a very different skill from a caught-
@@ -354,9 +360,12 @@ function shapeShotTypes(json) {
   // `pull`, so the number rides along with the data and the UI can caveat a
   // season rather than show 2020 and 2025 side by side as equals.
   let generic = 0;
+  let counted = 0;
 
   for (const row of set.rowSet) {
     const action = row[H.ACTION_TYPE];
+    if (NON_SHOT.test(action)) continue;
+    counted++;
     if (action === "Jump Shot" || action === "Layup Shot") generic++;
     const key = classifyShot(action, row[H.SHOT_TYPE]);
     const made = n(row[H.SHOT_MADE_FLAG]);
@@ -374,7 +383,7 @@ function shapeShotTypes(json) {
     byPlayer: flatten(byPlayer),
     byTeam: flatten(byTeam),
     league: [...(league.get(0) || new Map()).values()].sort((a, b) => b.a - a.a),
-    generic: set.rowSet.length ? Math.round((generic / set.rowSet.length) * 1000) / 10 : 0,
+    generic: counted ? Math.round((generic / counted) * 1000) / 10 : 0,
   };
 }
 
