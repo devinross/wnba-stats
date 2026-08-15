@@ -480,7 +480,7 @@ function SiteFooter({ updated }) {
             title={SITE.parentName}
             links={[
               ["Home", SITE.parentUrl],
-              ["NBA Stats", `${SITE.parentUrl}/pros/nba`],
+              ["NBA Stats", SITE.nbaUrl],
               ["Blog", `${SITE.parentUrl}/blog`],
               ["FAQ", `${SITE.parentUrl}/faq`],
             ]}

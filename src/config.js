@@ -13,6 +13,8 @@ export const SITE = {
   parentName: "Highlight Factory",
   url: "https://wnba.highlightfactory.app",
   parentUrl: "https://highlightfactory.app",
+  // Sibling subdomain — the NBA build of this same stats site.
+  nbaUrl: "https://nba.highlightfactory.app",
   tagline: "Every WNBA team, broken down — shot zones, four factors, lineups and on/off impact.",
   description:
     "WNBA team and player analytics from Highlight Factory: shot-zone maps, four factors, lineup net ratings, on/off impact and league-wide rankings, refreshed nightly.",
@@ -23,7 +25,7 @@ export const SITE = {
 // Header nav — everything here points back at the main site, since this
 // subdomain is a single app rather than a set of pages.
 export const NAV_LINKS = [
-  { href: `${SITE.parentUrl}/pros/nba`, label: "NBA Stats" },
+  { href: SITE.nbaUrl, label: "NBA Stats" },
   { href: `${SITE.parentUrl}/blog`, label: "Blog" },
   { href: `${SITE.parentUrl}/faq`, label: "FAQ" },
 ];
