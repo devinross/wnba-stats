@@ -346,8 +346,19 @@ function shapeShotTypes(json) {
   const byTeam = new Map();
   const league = new Map();
 
+  // How many attempts carried no play context at all — a bare "Jump Shot" or
+  // "Layup Shot" with none of the qualifiers the buckets key off. It runs ~35%
+  // in recent seasons but ~68% before 2022, when the feed simply recorded less:
+  // drives were logged as plain layups, pull-ups as plain jumpers. That pushes
+  // an old season's breakdown toward `spot` and `rim` and away from `drive` and
+  // `pull`, so the number rides along with the data and the UI can caveat a
+  // season rather than show 2020 and 2025 side by side as equals.
+  let generic = 0;
+
   for (const row of set.rowSet) {
-    const key = classifyShot(row[H.ACTION_TYPE], row[H.SHOT_TYPE]);
+    const action = row[H.ACTION_TYPE];
+    if (action === "Jump Shot" || action === "Layup Shot") generic++;
+    const key = classifyShot(action, row[H.SHOT_TYPE]);
     const made = n(row[H.SHOT_MADE_FLAG]);
     bump(byPlayer, row[H.PLAYER_ID], key, made);
     bump(byTeam, row[H.TEAM_ID], key, made);
@@ -363,6 +374,7 @@ function shapeShotTypes(json) {
     byPlayer: flatten(byPlayer),
     byTeam: flatten(byTeam),
     league: [...(league.get(0) || new Map()).values()].sort((a, b) => b.a - a.a),
+    generic: set.rowSet.length ? Math.round((generic / set.rowSet.length) * 1000) / 10 : 0,
   };
 }
 
@@ -393,24 +405,47 @@ const DEFEND_CATEGORIES = [
 // spending six round trips to be told nothing.
 const DEFEND_FIRST_SEASON = 2023;
 
-function shapeDefend(rowsByCategory) {
+// Takes [categoryKey, resultSet] pairs straight off the API rather than row
+// objects, because the columns that matter have to be found by position.
+function shapeDefend(setsByCategory) {
   const byPlayer = new Map();
-  for (const [key, rows] of rowsByCategory) {
-    for (const r of rows) {
-      const id = r.CLOSE_DEF_PERSON_ID;
+  const skipped = [];
+  for (const [key, set] of setsByCategory) {
+    if (!set || !Array.isArray(set.headers) || !Array.isArray(set.rowSet)) continue;
+    const H = Object.fromEntries(set.headers.map((h, i) => [h, i]));
+
+    // Every category ends with the same five columns in the same order — makes,
+    // attempts, the FG% she allowed, the FG% those shooters normally manage,
+    // and the gap between them. Only the *names* change: Overall calls them
+    // D_FGM/D_FG_PCT/NORMAL_FG_PCT, threes use FG3M/FG3_PCT/NS_FG3_PCT, and the
+    // distance splits use FGM_LT_06/LT_06_PCT/NS_LT_06_PCT and friends. Reading
+    // the tail by position beats keeping six sets of names in sync by hand.
+    const tail = set.headers.length - 5;
+    const [cFgm, cFga, cPct, cNorm, cDiff] = [0, 1, 2, 3, 4].map((i) => tail + i);
+    // ...but "the last five" is an assumption about someone else's API, so
+    // check it holds before trusting the numbers. Both percentage columns say
+    // so in their names; if they don't, the layout moved and this category is
+    // dropped rather than written out as plausible-looking nonsense.
+    if (tail < 0 || !/PCT/.test(set.headers[cPct] || "") || !/PCT/.test(set.headers[cNorm] || "")) {
+      skipped.push(key);
+      continue;
+    }
+
+    for (const row of set.rowSet) {
+      const id = row[H.CLOSE_DEF_PERSON_ID];
       if (id == null) continue;
       if (!byPlayer.has(id)) byPlayer.set(id, []);
       byPlayer.get(id).push({
         c: key,
-        gp: n(r.GP),
-        freq: pctOf(r.FREQ),
-        fgm: n(r.D_FGM),
-        fga: n(r.D_FGA),
+        gp: n(row[H.GP]),
+        freq: pctOf(row[H.FREQ]),
+        fgm: n(row[cFgm]),
+        fga: n(row[cFga]),
         // Allowed, expected, and the difference — negative means shooters did
         // worse than usual against her, which is the direction that is good.
-        pct: pctOf(r.D_FG_PCT),
-        normPct: pctOf(r.NORMAL_FG_PCT),
-        diff: pctOf(r.PCT_PLUSMINUS),
+        pct: pctOf(row[cPct]),
+        normPct: pctOf(row[cNorm]),
+        diff: pctOf(row[cDiff]),
       });
     }
   }
@@ -418,7 +453,7 @@ function shapeDefend(rowsByCategory) {
   // came back first, so every player's row reads the same way.
   const order = new Map(DEFEND_CATEGORIES.map(([, key], i) => [key, i]));
   for (const list of byPlayer.values()) list.sort((a, b) => order.get(a.c) - order.get(b.c));
-  return byPlayer;
+  return { byPlayer, skipped };
 }
 
 function toObjects(json, name) {
@@ -1227,7 +1262,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
   // at once (~35k rows, ~9MB), so this is by far the cheapest dataset here per
   // unit of detail — but it is also the biggest response, hence the longer
   // timeout.
-  let shotTypes = { byPlayer: new Map(), byTeam: new Map(), league: [] };
+  let shotTypes = { byPlayer: new Map(), byTeam: new Map(), league: [], generic: 0 };
   step("shotTypes");
   try {
     shotTypes = shapeShotTypes(await statsFetch("shotchartdetail", SHOT_CHART(season), { timeoutMs: 60000 }));
@@ -1251,13 +1286,17 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     const failures = [];
     for (const [category, key] of DEFEND_CATEGORIES) {
       try {
-        collected.push([key, toObjects(await statsFetch("leaguedashptdefend", DEFEND(season, category)), "LeagueDashPTDefend")]);
+        const json = await statsFetch("leaguedashptdefend", DEFEND(season, category));
+        const set = (json.resultSets || []).find((s) => s && s.name === "LeagueDashPTDefend");
+        if (!set || !(set.rowSet || []).length) throw new Error("no rows");
+        collected.push([key, set]);
       } catch (e) {
         failures.push(`${category}: ${e.message}`);
       }
       await sleep(DELAY_BETWEEN_CALLS_MS);
     }
-    defendByPlayer = shapeDefend(collected);
+    const shaped = shapeDefend(collected);
+    defendByPlayer = shaped.byPlayer;
     if (!defendByPlayer.size) {
       const why = failures.length ? failures.join("; ") : "no rows returned";
       done(`FAILED — ${why}`);
@@ -1265,8 +1304,10 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     } else {
       // A partial answer is still worth keeping: a player with five of six
       // categories is more useful than none, as long as the log says so.
-      done(`${defendByPlayer.size} defenders · ${collected.length}/${DEFEND_CATEGORIES.length} categories`
-        + (failures.length ? ` · missed ${failures.length}` : ""));
+      const kept = collected.length - shaped.skipped.length;
+      done(`${defendByPlayer.size} defenders · ${kept}/${DEFEND_CATEGORIES.length} categories`
+        + (failures.length ? ` · ${failures.length} failed` : "")
+        + (shaped.skipped.length ? ` · unreadable columns: ${shaped.skipped.join(", ")}` : ""));
     }
   }
 
@@ -1756,8 +1797,13 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
 
   // League-wide action-type totals: the baseline a player's own breakdown is
   // read against, since "44% on spot-up threes" only means something next to
-  // what the league shoots on them.
-  const leagueShotTypes = shotTypes.league;
+  // what the league shoots on them. The buckets travel with the generic share
+  // that qualifies them (see shapeShotTypes) as one object, so a run that loses
+  // the shot chart carries over both together or neither — a fresh 0% generic
+  // sitting next to last week's buckets would read as a clean season.
+  const leagueShotTypes = shotTypes.league.length
+    ? { buckets: shotTypes.league, generic: shotTypes.generic }
+    : null;
 
   // Back-fill the rest of the league-wide sets (the ranking was done above).
   Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, teamZoneWins });
