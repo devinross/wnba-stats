@@ -13,6 +13,8 @@
 //     npm run fetch -- --repair         retry only the seasons with gaps in them
 //     npm run fetch -- --out <dir>      write somewhere other than public/data
 //     npm run fetch -- --no-rotations   skip the per-game rotation backfill
+//     npm run fetch -- --rotation-limit 25   fetch more rotations than the
+//                                       nightly cap of 5 (0 = no cap)
 //
 // Completed seasons never change, so they are fetched once and then left alone;
 // only the current season is worth re-running. Output layout (see writeSeason):
@@ -172,6 +174,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TTY = Boolean(process.stdout.isTTY);
 const CLEAR_EOL = "\u001b[K"; // rub out the previous tick, which may be longer
 const elapsed = (since) => `${((Date.now() - since) / 1000).toFixed(1)}s`;
+// Wall-clock HH:MM:SS for the log-only lines of a long step: a run that stalls
+// at 3am should say where in the night it stalled.
+const stamp = () => new Date().toTimeString().slice(0, 8);
 let live = null; // { label, started, timer } while a step is in flight
 
 function begin(label) {
@@ -709,9 +714,10 @@ function shapeLineups(rows) {
 // single run.
 //
 // The design follows from that: every game is cached to its own file and never
-// refetched, one retry rather than an escalating chain, and whatever fails is
-// simply left for tomorrow. A season fills in over several nights instead of
-// one long run, and no run is unbounded.
+// refetched, one retry rather than an escalating chain, a small fixed number of
+// games attempted per run, and whatever fails is simply left for tomorrow. A
+// season fills in over several nights instead of one long run, and no run is
+// unbounded.
 //
 //     public/data/<season>/rotations/<gameId>.json
 //
@@ -737,6 +743,16 @@ const SEGMENT_GAMES = 11;
 // left when the budget runs out is simply next run's work, which is how this
 // step already treats failures.
 const ROTATION_BUDGET_MS = 10 * 60 * 1000;
+// How many games this step will *attempt* in one run — not how many succeed.
+// The endpoint answers a cold request in ~300ms and then degrades: a long pass
+// spends most of its time collecting 500s and timeouts, and the games it burns
+// through are lost to the run either way. A small nightly nibble stays inside
+// the window where the endpoint still answers, so a handful of games a night
+// backfills a season faster than one long throttled pass. Whatever is left is
+// next run's work, which is how this step already treats failures.
+// Override with `--rotation-limit N` (`--rotation-limit 0` for no cap) when
+// backfilling by hand.
+const ROTATION_MAX_PER_RUN = 5;
 const REGULATION_MIN = 40; // the heat map's x-axis; overtime is counted in the
                            // per-player totals but has no column of its own
 
@@ -781,8 +797,12 @@ async function readRotation(dir, season, gameId) {
  * Fill in every game of the season not already cached, and return the full set
  * keyed by game id. Games that fail are simply left out — the next run picks
  * them up, and a season is useful long before it's complete.
+ *
+ * This is by far the longest step in a run, so it narrates itself: `onPlan`
+ * fires once the cache has been read (how much work there actually is), and
+ * `onProgress` fires after every game with which game it was and how it went.
  */
-async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
+async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit = ROTATION_MAX_PER_RUN } = {}) {
   const byGame = new Map();
   const missing = [];
   for (const id of gameIds) {
@@ -791,18 +811,40 @@ async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
     else missing.push(id);
   }
 
+  // Oldest first (the order the schedule came in), so a backlog drains from the
+  // start of the season rather than leaving holes scattered through it.
+  const queue = limit > 0 ? missing.slice(0, limit) : missing;
+  const deferred = missing.length - queue.length;
+
+  // Roughly what the loop below costs if nothing fails: one request (~0.3s on a
+  // good day) plus the fixed delay per game. Failures cost more — timeout plus
+  // backoff — but the point is to set an expectation, not to predict.
+  if (onPlan) {
+    onPlan({
+      total: gameIds.length,
+      cached: byGame.size,
+      missing: missing.length,
+      queued: queue.length,
+      deferred,
+      estMs: queue.length * (ROTATION_DELAY_MS + 400),
+    });
+  }
+
   const failed = [];
   const deadline = Date.now() + ROTATION_BUDGET_MS;
   let ranOut = 0;
-  for (const [i, id] of missing.entries()) {
+  for (const [i, id] of queue.entries()) {
     if (Date.now() > deadline) {
-      ranOut = missing.length - i;
+      ranOut = queue.length - i;
       break;
     }
     let game = null;
     let lastErr = "";
+    let tries = 0;
+    const startedAt = Date.now();
     for (const wait of ROTATION_BACKOFF_MS) {
       if (wait) await sleep(wait);
+      tries += 1;
       try {
         game = shapeRotation(
           await statsFetch("gamerotation", { GameID: id, LeagueID: "10" }, { timeoutMs: ROTATION_TIMEOUT_MS })
@@ -819,16 +861,30 @@ async function fetchRotations(dir, season, gameIds, { onProgress } = {}) {
     } else {
       failed.push({ id, error: lastErr });
     }
-    if (onProgress) onProgress(i + 1, missing.length, failed.length);
+    if (onProgress) {
+      onProgress({
+        done: i + 1,
+        total: queue.length,
+        failed: failed.length,
+        id,
+        ok: Boolean(game),
+        error: lastErr,
+        tries,
+        ms: Date.now() - startedAt,
+        players: game ? Object.keys(game.names).length : 0,
+        stints: game ? game.stints.length : 0,
+      });
+    }
     await sleep(ROTATION_DELAY_MS);
   }
 
   return {
     byGame,
     cached: gameIds.length - missing.length,
-    fetched: missing.length - failed.length - ranOut,
+    fetched: queue.length - failed.length - ranOut,
     failed,
     ranOut,
+    deferred, // held back by the per-run cap, not by failure or the budget
   };
 }
 
@@ -1116,7 +1172,7 @@ async function updateIndex(dir, payload) {
 // Datasets that would render as "unavailable" — nothing fetched and nothing to
 // carry over. Zero means the season is complete and --repair can skip it.
 function countMissing(payload) {
-  const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "teamZoneWins"];
+  const LEAGUE_KEYS = ["teamRanks", "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "positionShotTypes", "teamZoneWins"];
   // `rotation` is deliberately not here. It fills in over several nights rather
   // than in one run (see the rotations section), and the seasons before it was
   // added have none at all — counting it would mark every season permanently
@@ -1140,7 +1196,7 @@ function countMissing(payload) {
  * `final` marks a completed season: no schedule to look ahead at, and anything
  * reused from an earlier fetch is simply correct rather than stale.
  */
-async function fetchSeason(season, { outDir, final, nth, of, rotations = true }) {
+async function fetchSeason(season, { outDir, final, nth, of, rotations = true, rotationLimit = ROTATION_MAX_PER_RUN }) {
   const startedAt = Date.now();
   const which = of > 1 ? `  [season ${nth} of ${of}]` : "";
   console.log(`\n${"─".repeat(64)}\n${season}${final ? " (completed season)" : " (season in progress)"}${which}\n`);
@@ -1562,18 +1618,60 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
   let rotationErr = null;
   if (rotations) {
     const gameIds = [...rowsByGame.keys()];
+    // "LVA @ SEA · Aug 12" for a game id, so the log says which matchup is on
+    // the wire rather than an opaque 1022600001.
+    const gameLabel = (id) => {
+      const pair = rowsByGame.get(id) || [];
+      if (!pair.length) return String(id);
+      const when = pair[0].GAME_DATE ? ` · ${fmtDate(pair[0].GAME_DATE)}` : "";
+      if (pair.length < 2) return `${String(pair[0].MATCHUP || id)}${when}`;
+      const home = pair.find((r) => String(r.MATCHUP || "").includes(" vs")) || pair[1];
+      const away = pair.find((r) => r !== home) || pair[0];
+      const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
+      return `${ab(away)} @ ${ab(home)}${when}`;
+    };
     begin(`  • ${season} rotations … `);
+    // begin() leaves its line open for the ticker to overwrite. In a log there
+    // is no ticker, so the first per-game line has to close it first.
+    let lineOpen = true;
+    const logLine = (line) => {
+      if (lineOpen) {
+        process.stdout.write("\n");
+        lineOpen = false;
+      }
+      console.log(line);
+    };
     try {
       const res = await fetchRotations(outDir, season, gameIds, {
-        onProgress: (done_, total, failed) => {
-          const note = `fetching ${done_}/${total}${failed ? ` (${failed} failed)` : ""}`;
+        limit: rotationLimit,
+        onPlan: ({ total, cached, missing, queued, deferred, estMs }) => {
+          if (TTY || !missing) return;
+          // Without a terminal this is the only chance to say how long the step
+          // is about to sit there before the first game comes back.
+          const held = deferred ? ` · ${deferred} held for later runs (cap ${rotationLimit}/run)` : "";
+          logLine(
+            `      ${season} rotations: ${total} games on the schedule · ${cached} already on disk · ` +
+              `${missing} still missing → fetching ${queued} now` +
+              ` (~${Math.max(1, Math.round(estMs / 60000))} min if they all answer)${held}`
+          );
+        },
+        onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, players }) => {
+          const label = gameLabel(id);
           if (TTY) {
+            const note = `${done_}/${total} ${label}${failed ? ` (${failed} failed)` : ""}`;
             process.stdout.write(`\r  • ${season} rotations … ${note}${CLEAR_EOL}`);
-          } else if (done_ % 50 === 0 || done_ === total) {
-            // No ticker without a terminal, and this step can run for twenty
-            // minutes — CI needs to see it's alive, so it gets a line per 50.
-            console.log(`      ${season} rotations … ${note}`);
+            return;
           }
+          // One line per game in the log. Each one is a second or more of wall
+          // clock, so this isn't chatty — it's the difference between a nightly
+          // run that looks hung and one you can watch move.
+          const outcome = ok
+            ? `${players} players${tries > 1 ? ` (retry)` : ""}`
+            : `FAILED: ${error || "unknown"}`;
+          logLine(
+            `      [${stamp()}] ${season} rotations ${done_}/${total}  ${label} … ` +
+              `${outcome} · ${(ms / 1000).toFixed(1)}s`
+          );
         },
       });
       // Each team's schedule in date order — the same sort buildGames uses, so
@@ -1595,12 +1693,22 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
       if (res.fetched) bits.push(`${res.fetched} new`);
       if (res.failed.length) bits.push(`${res.failed.length} failed — will retry next run`);
       if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(ROTATION_BUDGET_MS / 60000)}min budget)`);
-      done(bits.join(" · "));
+      if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${rotationLimit}/run)`);
+      const summary = bits.join(" · ");
+      // If per-game lines already closed the label line, the summary needs to
+      // carry the label itself instead of finishing a line that's long gone.
+      done(lineOpen ? summary : `  • ${season} rotations … ${summary}`);
       if (res.failed.length) {
-        // One line, not one per game: this endpoint fails in clusters and the
-        // pattern (all of them, or three of two hundred) is what matters.
+        // One line for the reasons, not one per game: this endpoint fails in
+        // clusters and the pattern (all of them, or three of two hundred) is
+        // what matters. The matchups follow so a failure is identifiable
+        // without matching game ids by hand.
         const reasons = [...new Set(res.failed.map((f) => f.error))].slice(0, 3);
         console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons.join(" / ")}`);
+        const labels = res.failed.slice(0, 8).map((f) => gameLabel(f.id));
+        const more = res.failed.length - labels.length;
+        // " / " between games: the labels have their own "·" in them.
+        console.log(`      ${labels.join(" / ")}${more > 0 ? ` / +${more} more` : ""}`);
       }
       if (!res.byGame.size) rotationErr = "No games returned rotation data.";
     } catch (e) {
@@ -1804,6 +1912,39 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     ? { G: [...posAgg.G.values()], F: [...posAgg.F.values()] }
     : null; // null, not zeroes — see leagueShotZones above
 
+  // Per-position shot-type baselines. Three buckets here rather than the zones'
+  // two, because shot type is exactly where a centre stops looking like a
+  // forward: the league average is a third spot-up threes, which is not a shot
+  // most centres take at all, so measuring one against it says little more than
+  // "she is a centre". Splitting them out asks the question worth asking —
+  // is she getting good shots for a centre?
+  //
+  // Bucketed on the first letter of the listed position, so a hyphenated
+  // "F-C" counts as a forward and "C-F" as a centre. Players with no listed
+  // position are left out (the UI falls back to the league baseline for them).
+  const TYPE_POS_GROUPS = ["G", "F", "C"];
+  const typePosAgg = { G: new Map(), F: new Map(), C: new Map() };
+  for (const [playerId, buckets] of shotTypes.byPlayer) {
+    const pos = String(playerPosById.get(playerId) || "").trim().toUpperCase();
+    const group = pos.charAt(0);
+    if (!TYPE_POS_GROUPS.includes(group)) continue;
+    for (const b of buckets) {
+      const agg = typePosAgg[group].get(b.t) || { t: b.t, m: 0, a: 0 };
+      agg.m += b.m; agg.a += b.a;
+      typePosAgg[group].set(b.t, agg);
+    }
+  }
+  // Only publish a bucket set that actually has shots behind it: an archived
+  // season whose roster feed never returned positions would otherwise ship
+  // three empty arrays, which the UI can't tell from a real zero.
+  const positionShotTypes = shotTypes.byPlayer.size
+    ? Object.fromEntries(
+        TYPE_POS_GROUPS
+          .map((g) => [g, [...typePosAgg[g].values()].sort((x, y) => y.a - x.a)])
+          .filter(([, list]) => list.length)
+      )
+    : null;
+
   // League-wide action-type totals: the baseline a player's own breakdown is
   // read against, since "44% on spot-up threes" only means something next to
   // what the league shoots on them. The buckets travel with the generic share
@@ -1815,14 +1956,14 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
     : null;
 
   // Back-fill the rest of the league-wide sets (the ranking was done above).
-  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, teamZoneWins });
+  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins });
   Object.assign(
     leagueStale,
     carryOver(
       league,
       prev,
       [
-        "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "teamZoneWins", "leaders",
+        "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "positionShotTypes", "teamZoneWins", "leaders",
         // A completed season has no slate to show, so an empty scoreboard is the
         // right answer there rather than something to back-fill.
         ...(final ? [] : ["scoreboard"]),
@@ -1836,6 +1977,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true })
           leagueShotZones: errLeague.teamShotZones,
           leagueShotTypes: errLeague.shotTypes,
           positionShotZones: errLeague.playerShotZones,
+          positionShotTypes: errLeague.shotTypes,
           teamZoneWins: errLeague.teamShotZones,
           leaders: playerLogErr,
           scoreboard: scheduleErr,
@@ -1936,7 +2078,7 @@ function parseSeasonRange(text) {
 }
 
 function parseArgs(argv) {
-  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true };
+  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true, rotationLimit: ROTATION_MAX_PER_RUN };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--season" || arg === "--seasons") {
@@ -1950,6 +2092,13 @@ function parseArgs(argv) {
       opts.outDir = argv[++i];
     } else if (arg === "--no-rotations") {
       opts.rotations = false;
+    } else if (arg === "--rotation-limit") {
+      const raw = argv[++i];
+      const limit = Number(raw);
+      if (!Number.isInteger(limit) || limit < 0) {
+        throw new Error(`--rotation-limit needs a whole number of games (0 for no cap), not "${raw}".`);
+      }
+      opts.rotationLimit = limit;
     } else if (arg === "--all") {
       opts.seasons = parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
       opts.mode = "explicit";
@@ -2004,7 +2153,8 @@ async function main() {
     const final = season < CURRENT_SEASON;
     try {
       const entry = await fetchSeason(season, {
-        outDir: opts.outDir, final, nth: i + 1, of: seasons.length, rotations: opts.rotations,
+        outDir: opts.outDir, final, nth: i + 1, of: seasons.length,
+        rotations: opts.rotations, rotationLimit: opts.rotationLimit,
       });
       if (entry.failed) degraded.push({ season, failed: entry.failed, missing: entry.missing });
     } catch (e) {

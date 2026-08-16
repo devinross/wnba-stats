@@ -160,6 +160,39 @@ const SOURCES = {
     })}`,
   }),
 
+  // Shot action types have no published page: wnba.com's shooting tables split
+  // by zone and distance, never by how the shot was created. The numbers come
+  // from the shot chart behind the team's own shooting page, one row per
+  // attempt, so that's what this points at — the closest thing to a view you
+  // can check these against by eye.
+  shotTypes: ({ season, teamId }) => ({
+    label: "Team · Shooting (shot detail)",
+    url: `${STATS_HOST}/team/${teamId}/shooting/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,
+    formula:
+      "Ours, from every attempt's ACTION_TYPE label: spot-up, pull-up, floater, drive, cut, putback, " +
+      "post and layup, with pull-ups and spot-ups split either side of the arc. There is no Synergy " +
+      "play-type data for the WNBA and no feed records screens, so there is no pick-and-roll split — " +
+      "\"pull-up\" is off the dribble generally, ball screen or isolation alike.",
+  }),
+
+  playerShotTypes: ({ season, teamId }) => ({
+    label: "Players · Shooting (shot detail)",
+    url: `${STATS_HOST}/players/shooting/?${qs({ ...SEASON(season), PerMode: "Totals", TeamID: teamId })}`,
+    formula:
+      "Ours, from every attempt's ACTION_TYPE label. Shares are her cut of her own attempts, compared " +
+      "with the same cut taken by every WNBA player at her listed position — guard, forward or center, " +
+      "on the first letter of the position, so an \"F-C\" counts as a forward. A player with no listed " +
+      "position is compared with the league instead.",
+  }),
+
+  shotDefend: ({ season }) => ({
+    label: "Players · Defense Dashboard (closest defender)",
+    url: `${STATS_HOST}/players/defense-dash-overall/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,
+    formula:
+      "Shown as published: FG% allowed with her as the closest defender, the shooters' normal FG% from " +
+      "the same range, and the gap. Tracking starts in 2023 — earlier seasons have none.",
+  }),
+
   onOff: ({ season, teamId }) => ({
     label: "Team · On/Off Court Advanced",
     url: `${STATS_HOST}/team/${teamId}/onoffcourt-advanced/?${qs({
@@ -201,6 +234,7 @@ const SOURCES = {
 const TEAM_SCOPED = new Set([
   "games", "roster", "teamShooting", "scoringShare",
   "playerAdv", "playerLog", "playerShotZones", "onOff", "lineups", "rotation",
+  "shotTypes", "playerShotTypes",
 ]);
 
 /**

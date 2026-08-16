@@ -11,6 +11,10 @@ import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import StaleNote from "./StaleNote.jsx";
 import SourceNote from "./SourceNote.jsx";
+import {
+  ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
+  TeamDefendTable, DefendExplainer,
+} from "./PlayTypes.jsx";
 import { sourceFor } from "./sources.js";
 
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
@@ -99,11 +103,13 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-function LeaderCard({ label, leader, statKey, unit }) {
+function LeaderCard({ label, leader, statKey, unit, playerHref, onPlayer }) {
   return (
     <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 14, padding: "14px 16px" }}>
       <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: C.BRAND, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{leader.name}</div>
+      <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <PlayerLink name={leader.name} href={playerHref && playerHref(leader.name)} onGo={onPlayer} />
+      </div>
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: 26, fontWeight: 700, color: C.TXT, lineHeight: 1.1, marginTop: 2 }}>
         {leader[statKey]}<span style={{ fontSize: 12, color: C.MUTE, fontWeight: 600, marginLeft: 4 }}>{unit}</span>
       </div>
@@ -114,8 +120,9 @@ function LeaderCard({ label, leader, statKey, unit }) {
 // A player's name as a link to their own page. Falls back to plain text when no
 // href is available (the advanced feed occasionally lists a name that isn't on
 // the roster snapshot, and a dead link is worse than no link).
-function PlayerLink({ name, href, onGo }) {
-  if (!href) return name;
+function PlayerLink({ name, href, onGo, label, style }) {
+  const text = label || name;
+  if (!href) return text;
   return (
     <a
       href={href}
@@ -124,9 +131,9 @@ function PlayerLink({ name, href, onGo }) {
         e.preventDefault();
         onGo && onGo(name);
       }}
-      style={{ color: C.TXT, borderBottom: `1px solid ${C.LINE}` }}
+      style={{ color: C.TXT, borderBottom: `1px solid ${C.LINE}`, ...style }}
     >
-      {name}
+      {text}
     </a>
   );
 }
@@ -260,13 +267,19 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, rotation = null, leagueShotZones = [], teamZoneWins = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
   // Footnote links back to the wnba.com page each section was built from, so
   // any number here can be checked against the source it came from.
   const src = useMemo(
     () => (key) => sourceFor(key, { season, teamId }),
     [season, teamId]
   );
+
+  // The league baseline every shot-type row is read against, and whether any
+  // player on this roster has closest-defender numbers — tracking only starts
+  // in 2023, and a roster can have none even after that.
+  const leagueTypeBuckets = (leagueShotTypes && leagueShotTypes.buckets) || [];
+  const rosterDefends = roster.some((p) => (p.shotDefend || []).length);
 
   const team = useMemo(() => {
     const gp = games.length;
@@ -344,6 +357,9 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
     };
   }, [teamRanks, teamId]);
 
+  // Points scored vs allowed is folded into the margin chart as a drawer.
+  const [showPoints, setShowPoints] = useState(false);
+
   // Shooting & possession profile vs the league.
   const [metric, setMetric] = useState("efg");
   const activeMetric = PROFILE_METRICS.find((m) => m.key === metric) || PROFILE_METRICS[0];
@@ -420,7 +436,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         <BigTile label="Last 5" value={team.last5seq.join(" ")} sub={team.last5} />
       </div>
 
-      {/* Margin by game */}
+      {/* Margin by game — expands to show points scored vs allowed */}
       <Section title="Margin by game" hint="green = win · red = loss" source={src("games")}>
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -436,40 +452,62 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-      </Section>
 
-      {/* Points for vs against */}
-      <Section
-        title="Points scored vs allowed"
-        hint={<span><span style={{ color: C.BRAND }}>● scored</span>{"  "}<span style={{ color: C.ACCENT }}>● allowed</span></span>}
-        source={src("games")}
-      >
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-            <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
-            <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
-            <Tooltip
-              contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
-              labelStyle={{ color: C.BRAND }}
-              labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)}
-              formatter={(v, key) => [v, key === "for" ? "Scored" : "Allowed"]}
-            />
-            <ReferenceLine y={team.ppg} stroke={C.BRAND} strokeDasharray="5 4" strokeOpacity={0.5} />
-            <Line type="monotone" dataKey="for" stroke={C.BRAND} strokeWidth={2.5} dot={{ r: 3, fill: C.BRAND }} activeDot={{ r: 5 }} />
-            <Line type="monotone" dataKey="against" stroke={C.ACCENT} strokeWidth={2.5} dot={{ r: 3, fill: C.ACCENT }} activeDot={{ r: 5 }} />
-          </LineChart>
-        </ResponsiveContainer>
+        <button
+          type="button"
+          onClick={() => setShowPoints((v) => !v)}
+          aria-expanded={showPoints}
+          aria-controls="points-breakdown"
+          style={{
+            display: "flex", alignItems: "center", gap: 6, width: "100%",
+            marginTop: 12, padding: "8px 0 0", background: "none",
+            border: "none", borderTop: `1px solid ${C.LINE}`,
+            color: C.MUTE, fontFamily: FONT_BODY, fontSize: 12,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ display: "inline-block", transform: `rotate(${showPoints ? 90 : 0}deg)`, transition: "transform .2s ease" }}>
+            ▸
+          </span>
+          {showPoints ? "Hide" : "Show"} points scored vs allowed
+        </button>
+
+        {showPoints && (
+          <div id="points-breakdown" style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+              <h3 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, margin: 0 }}>Points scored vs allowed</h3>
+              <span style={{ fontSize: 11, color: C.MUTE }}>
+                <span style={{ color: C.BRAND }}>● scored</span>{"  "}<span style={{ color: C.ACCENT }}>● allowed</span>
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={gameData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
+                <YAxis tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE} />
+                <Tooltip
+                  contentStyle={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 10, color: C.TXT }}
+                  labelStyle={{ color: C.BRAND }}
+                  labelFormatter={(l, pl) => (pl && pl[0] ? pl[0].payload.label : l)}
+                  formatter={(v, key) => [v, key === "for" ? "Scored" : "Allowed"]}
+                />
+                <ReferenceLine y={team.ppg} stroke={C.BRAND} strokeDasharray="5 4" strokeOpacity={0.5} />
+                <Line type="monotone" dataKey="for" stroke={C.BRAND} strokeWidth={2.5} dot={{ r: 3, fill: C.BRAND }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="against" stroke={C.ACCENT} strokeWidth={2.5} dot={{ r: 3, fill: C.ACCENT }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </Section>
 
       {/* Leaders */}
       <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: "0 0 12px" }}>Team leaders</h2>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
-        <LeaderCard label="Scoring" leader={leaders.ppg} statKey="ppg" unit="ppg" />
-        <LeaderCard label="Rebounding" leader={leaders.rpg} statKey="rpg" unit="rpg" />
-        <LeaderCard label="Assists" leader={leaders.apg} statKey="apg" unit="apg" />
-        <LeaderCard label="Steals" leader={leaders.spg} statKey="spg" unit="spg" />
-        <LeaderCard label="Blocks" leader={leaders.bpg} statKey="bpg" unit="bpg" />
+        <LeaderCard label="Scoring" leader={leaders.ppg} statKey="ppg" unit="ppg" playerHref={playerHref} onPlayer={onPlayer} />
+        <LeaderCard label="Rebounding" leader={leaders.rpg} statKey="rpg" unit="rpg" playerHref={playerHref} onPlayer={onPlayer} />
+        <LeaderCard label="Assists" leader={leaders.apg} statKey="apg" unit="apg" playerHref={playerHref} onPlayer={onPlayer} />
+        <LeaderCard label="Steals" leader={leaders.spg} statKey="spg" unit="spg" playerHref={playerHref} onPlayer={onPlayer} />
+        <LeaderCard label="Blocks" leader={leaders.bpg} statKey="bpg" unit="bpg" playerHref={playerHref} onPlayer={onPlayer} />
       </div>
 
       <div className="split-2" style={{ display: "grid", gridTemplateColumns: "minmax(260px, 360px) 1fr", gap: 18, marginBottom: 22 }}>
@@ -498,7 +536,9 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           {share.map((p) => (
             <div key={p.name} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 13, color: C.TXT, fontWeight: 600 }}>{lastName(p.name)}</span>
+                <span style={{ fontSize: 13, color: C.TXT, fontWeight: 600 }}>
+                  <PlayerLink name={p.name} label={lastName(p.name)} href={playerHref && playerHref(p.name)} onGo={onPlayer} />
+                </span>
                 <span style={{ fontSize: 12, color: C.MUTE, fontFamily: FONT_DISPLAY }}>
                   {p.share}% <span style={{ opacity: 0.6 }}>· {p.totalPts} pts</span>
                 </span>
@@ -528,6 +568,57 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           </div>
         ) : (
           <Unavailable what="Zone shooting" detail={errors.shotZones} />
+        )}
+      </Section>
+
+      {/* Shot types — how this team's attempts get created, vs the league */}
+      <Section
+        title={`${teamName} shot types`}
+        hint="how each shot was created · share of attempts vs the league"
+        stale={stale.shotTypes}
+        source={src("shotTypes")}
+      >
+        <ShotTypeCaveat generic={leagueShotTypes && leagueShotTypes.generic} season={season} />
+        {shotTypes && shotTypes.length ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 22, alignItems: "start" }}>
+            <ShotTypeChart types={shotTypes} league={leagueTypeBuckets} label={teamName} />
+            <div className="scroll-x" style={{ overflowX: "auto" }}>
+              <ShotTypeTable types={shotTypes} league={leagueTypeBuckets} />
+              <p style={{ fontSize: 12, color: C.MUTE, margin: "10px 2px 0", lineHeight: 1.5 }}>
+                Every attempt sorted by how it was created, from the shot chart's own label.
+                There is no pick-and-roll split — the WNBA feeds publish no play-type data and
+                nothing anywhere records a screen — so <strong style={{ color: C.TXT }}>Pull-up</strong> means
+                off the dribble generally, ball screen and isolation alike.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <Unavailable what="Shot types" detail={errors.shotTypes} />
+        )}
+      </Section>
+
+      {/* Defensive matchups — the roster ranked by closest-defender impact */}
+      <Section
+        title={`${teamName} defensive matchups`}
+        hint="FG% allowed vs what those shooters normally make · best first"
+        source={src("shotDefend")}
+      >
+        {rosterDefends ? (
+          <>
+            <DefendExplainer />
+            <div className="scroll-x" style={{ overflowX: "auto" }}>
+              <TeamDefendTable
+                roster={roster}
+                playerLink={(name) => <PlayerLink name={name} href={playerHref && playerHref(name)} onGo={onPlayer} />}
+              />
+            </div>
+          </>
+        ) : (
+          <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>
+            {Number(season) < 2023
+              ? `Closest-defender tracking starts in 2023, so there are no matchup numbers for ${season}.`
+              : "No defensive matchup data for this roster yet."}
+          </p>
         )}
       </Section>
 

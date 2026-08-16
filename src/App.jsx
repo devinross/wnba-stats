@@ -505,7 +505,7 @@ function SiteFooter({ updated }) {
 function Shell({ index, league, route, setRoute, seasonLoading }) {
   const currentSeason = index.currentSeason;
 
-  const { teams, teamRanks, teamProfiles, leagueShotZones, positionShotZones, teamZoneWins, meta } = league;
+  const { teams, teamRanks, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins, meta } = league;
   const {
     standings = [], scoreboard = [], leaders = null,
   } = league;
@@ -531,7 +531,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
-    lineups = [], upcoming = [], shotZones = null, rotation = null, errors = {},
+    lineups = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, errors = {},
   } = bundle;
   const teamLoading = teamState.loading || seasonLoading;
   const player = roster[sel] || null;
@@ -742,8 +742,10 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           teamProfiles={teamProfiles}
           upcoming={upcoming}
           shotZones={shotZones}
+          shotTypes={shotTypes}
           rotation={rotation}
           leagueShotZones={leagueShotZones}
+          leagueShotTypes={leagueShotTypes}
           teamZoneWins={teamZoneWins}
           playerHref={playerHrefByName}
           onPlayer={goToPlayerByName}
@@ -756,7 +758,9 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           sel={Math.min(sel, roster.length - 1)}
           setSel={setSel}
           leagueShotZones={leagueShotZones}
+          leagueShotTypes={leagueShotTypes}
           positionShotZones={positionShotZones}
+          positionShotTypes={positionShotTypes}
           playerHref={playerHref}
           season={season}
           teamId={team.id}
