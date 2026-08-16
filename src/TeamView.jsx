@@ -17,6 +17,10 @@ import {
 } from "./PlayTypes.jsx";
 import { sourceFor } from "./sources.js";
 
+// How many rows the schedule/results tables show before the user expands them.
+const UPCOMING_PREVIEW = 5;
+const RESULTS_PREVIEW = 10;
+
 const sum = (arr, k) => arr.reduce((a, b) => a + b[k], 0);
 const r1 = (n) => Math.round(n * 10) / 10;
 const pct = (m, a) => (a > 0 ? r1((m / a) * 100) : 0);
@@ -164,6 +168,31 @@ function Unavailable({ what, detail }) {
         </p>
       )}
     </div>
+  );
+}
+
+// Disclosure row under a truncated table — same affordance as the margin
+// chart's points drawer.
+function MoreToggle({ open, onToggle, controls, showLabel, hideLabel }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-controls={controls}
+      style={{
+        display: "flex", alignItems: "center", gap: 6, width: "100%",
+        marginTop: 12, padding: "8px 0 0", background: "none",
+        border: "none", borderTop: `1px solid ${C.LINE}`,
+        color: C.MUTE, fontFamily: FONT_BODY, fontSize: 12,
+        cursor: "pointer", textAlign: "left",
+      }}
+    >
+      <span style={{ display: "inline-block", transform: `rotate(${open ? 90 : 0}deg)`, transition: "transform .2s ease" }}>
+        ▸
+      </span>
+      {open ? hideLabel : showLabel}
+    </button>
   );
 }
 
@@ -359,6 +388,11 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
   // Points scored vs allowed is folded into the margin chart as a drawer.
   const [showPoints, setShowPoints] = useState(false);
+
+  // Schedule and results are truncated by default — the rest is one click away.
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [showAllResults, setShowAllResults] = useState(false);
+  const recentFirst = useMemo(() => [...games].reverse(), [games]);
 
   // Shooting & possession profile vs the league.
   const [metric, setMetric] = useState("efg");
@@ -829,7 +863,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
       {(upcoming.length > 0 || errors.schedule) && (
         <Section title="Upcoming games" stale={stale.upcoming} source={src("upcoming")}>
           {upcoming.length > 0 ? (
-            <div className="scroll-x" style={{ overflowX: "auto" }}>
+            <div className="scroll-x" id="upcoming-games" style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 460 }}>
                 <thead>
                   <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -839,7 +873,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
                   </tr>
                 </thead>
                 <tbody>
-                  {upcoming.map((g, idx) => (
+                  {(showAllUpcoming ? upcoming : upcoming.slice(0, UPCOMING_PREVIEW)).map((g, idx) => (
                     <tr key={idx} style={{ borderBottom: `1px solid ${C.LINE}55` }}>
                       <td style={{ padding: "9px 10px", whiteSpace: "nowrap", color: C.MUTE }}>{g.date}</td>
                       <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>
@@ -859,12 +893,21 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           ) : (
             <Unavailable what="The schedule" detail={errors.schedule} />
           )}
+          {upcoming.length > UPCOMING_PREVIEW && (
+            <MoreToggle
+              open={showAllUpcoming}
+              onToggle={() => setShowAllUpcoming((v) => !v)}
+              controls="upcoming-games"
+              showLabel={`Show all ${upcoming.length} scheduled games`}
+              hideLabel={`Show only the next ${UPCOMING_PREVIEW}`}
+            />
+          )}
         </Section>
       )}
 
       {/* Results table */}
       <Section title="Results" source={src("games")}>
-        <div className="scroll-x" style={{ overflowX: "auto" }}>
+        <div className="scroll-x" id="results-table" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
             <thead>
               <tr style={{ color: C.MUTE, fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
@@ -874,7 +917,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
               </tr>
             </thead>
             <tbody>
-              {[...games].reverse().map((g) => {
+              {(showAllResults ? recentFirst : recentFirst.slice(0, RESULTS_PREVIEW)).map((g) => {
                 const margin = (g.tm || 0) - (g.op || 0);
                 return (
                   <tr key={g.id} style={{ borderBottom: `1px solid ${C.LINE}55` }}>
@@ -894,6 +937,15 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             </tbody>
           </table>
         </div>
+        {recentFirst.length > RESULTS_PREVIEW && (
+          <MoreToggle
+            open={showAllResults}
+            onToggle={() => setShowAllResults((v) => !v)}
+            controls="results-table"
+            showLabel={`Show all ${recentFirst.length} results`}
+            hideLabel={`Show only the last ${RESULTS_PREVIEW}`}
+          />
+        )}
       </Section>
 
       {/* Shooting profile vs winning — league-wide scatter, shared with the
