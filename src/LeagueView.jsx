@@ -422,14 +422,25 @@ const LEADER_CATS = [
   { key: "blk", label: "Blocks", unit: "bpg" },
 ];
 
+/**
+ * "Brittney Sykes" -> "B. Sykes". The ranked rows under each leader put a name,
+ * a team abbreviation and a number on one line, and a full name pushes the
+ * number off the end of the card at desktop width, where five cards share a row.
+ */
+const shortName = (full) => {
+  const parts = String(full || "").trim().split(/\s+/);
+  if (parts.length < 2) return full;
+  return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
+};
+
 function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
   if (!rows || !rows.length) return null;
   const [top, ...rest] = rows;
   const teamOf = (id) => byId.get(id);
 
-  const name = (row, style) => {
+  const name = (row, style, text = row.name) => {
     const href = playerHref(row.teamId, row.name);
-    const label = <span style={style}>{row.name}</span>;
+    const label = <span style={style}>{text}</span>;
     if (!href) return label;
     return (
       <a
@@ -469,7 +480,7 @@ function LeaderCard({ cat, rows, byId, playerHref, onPlayer }) {
           <li key={row.name} style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 12.5 }}>
             <span style={{ color: C.MUTE, fontFamily: FONT_DISPLAY, width: 12 }}>{i + 2}</span>
             <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {name(row)}
+              {name(row, undefined, shortName(row.name))}
               <span style={{ color: C.MUTE, marginLeft: 6 }}>{(teamOf(row.teamId) || {}).abbr}</span>
             </span>
             <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700 }}>{row.v.toFixed(1)}</span>
