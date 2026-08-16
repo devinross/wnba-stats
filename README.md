@@ -29,7 +29,7 @@ This guide assumes you've **never used React**.
 ```
 
 Run the fetch script on your Mac (its IP isn't blocked by stats.wnba.com). It
-writes one folder per season. Build the site from those and upload the static
+writes one folder per season. Build the site from those and deploy the static
 files.
 
 **Why the data is split up.** One file per season holds every team, which meant
@@ -183,37 +183,31 @@ own URL, title and crawlable content.
 
 ---
 
-## 5. Upload to Bluehost
+## 5. Deploy
 
-Bluehost serves files from **`public_html`**. Because the site is now fully
-static, **you do not need PHP or the old proxy** — just upload the files.
+The site is deployed to Vercel at **wnba.highlightfactory.app**, and every push
+to the default branch redeploys — including the nightly data commits. See
+[HOSTING.md](HOSTING.md) for the one-time project setup and the caching rules in
+`vercel.json`.
 
-**Option A - cPanel File Manager:** zip the **contents of `dist/`**, upload to
-`public_html`, and extract so `public_html/index.html` exists (and the
-`public_html/data/` folder exists alongside it).
+Whatever the host, the build has two requirements:
 
-**Option B - SFTP / your editor's publish feature:** upload the **contents of
-`dist/`** into `public_html/`.
+> **It must be served from a domain root.** Asset and data paths used to be
+> relative (`base: "./"`), so a subfolder worked. The site now prerenders a page
+> per team and player, served from nested paths like `/team/atlanta-dream/`, and
+> a relative asset URL on one of those resolves to
+> `/team/atlanta-dream/assets/…`. So `vite.config.js` sets `base: "/"` and
+> `dist/` has to sit at the root of a domain, not inside a subfolder of one.
 
-> **Subfolder deploys no longer work.** They used to: asset and data paths were
-> relative (`base: "./"`). The site now prerenders a page per team and player,
-> which are served from nested paths like `/team/atlanta-dream/`, and a relative
-> asset URL on one of those resolves to `/team/atlanta-dream/assets/…`. So
-> `vite.config.js` sets `base: "/"` and the build must be served from a domain
-> root — `wnba.highlightfactory.app`, or `public_html/` itself, but not
-> `public_html/wnba/`.
-
-Any host also needs to serve `dist/team/atlanta-dream/index.html` for the URL
+It also needs to serve `dist/team/atlanta-dream/index.html` for the URL
 `/team/atlanta-dream`, which static hosts (Vercel, Netlify, Apache, nginx) do by
-default. It also needs a **single-page-app fallback** for paths with no file of
-their own — a past season's player pages are rendered in the browser rather than
+default, plus a **single-page-app fallback** for paths with no file of their own
+— a past season's player pages are rendered in the browser rather than
 prerendered (see [Search engines & sharing](#search-engines--sharing)), so
 `/2019/team/washington-mystics/elena-delle-donne` has to serve the root
 `index.html` instead of 404ing. `vercel.json` does this with a rewrite that
 excludes `/data` and `/assets`, so a genuinely missing data file still fails
 honestly rather than returning HTML.
-
-That's it. Load your domain and the dashboard appears.
 
 ---
 
@@ -233,7 +227,6 @@ shares that brand's design language, copied from the marketing site
   secondary series. Edit `src/palette.js` to change any of it; keep
   `src/index.css` in sync, since the two describe the same tokens for different
   consumers (Recharts vs. page chrome).
-- **Light only.** Like the main site, there is no night mode and no toggle.
 - **Header/footer** — `src/App.jsx` carries a header matched to the marketing
   site's (`BrandMark` + "WNBA Stats / powered by Highlight Factory", mono nav,
   plum download capsule). The links back to the main site live in
@@ -335,8 +328,8 @@ npm run fetch      # re-download the current season into public/data/<season>/
 npm run build      # rebuild dist/  (or: npm run refresh to do both)
 ```
 
-Then re-upload `dist/` (or just the updated `dist/data/<season>/` folder and
-`dist/data/index.json`).
+Then redeploy (on Vercel, committing the refreshed `public/data/` is enough —
+the nightly job does exactly this).
 
 **When a new season starts:** bump `CURRENT_SEASON` at the top of
 `scripts/fetch-data.mjs` and run `npm run fetch`. Last year's data becomes an
@@ -353,7 +346,7 @@ re-run `npm run fetch`. Any team that doesn't match gets a 🏀.
 output directory, so a cron job could refresh the live files without a rebuild:
 
 ```bash
-node scripts/fetch-data.mjs --out /home/youruser/public_html/data
+node scripts/fetch-data.mjs --out /path/to/served/data
 ```
 
 (Only works if that server's IP isn't blocked by stats.wnba.com — many shared
@@ -365,7 +358,7 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 
 | Symptom | Fix |
 |---|---|
-| Site says "Couldn't load data/index.json" | You haven't fetched yet, or didn't upload the `data/` folder. Run `npm run fetch`, rebuild, and make sure `data/` sits next to `index.html`. |
+| Site says "Couldn't load data/index.json" | You haven't fetched yet, or the `data/` folder didn't get deployed. Run `npm run fetch`, rebuild, and make sure `data/` sits next to `index.html`. |
 | A season is missing from the dropdown | It isn't on disk. `npm run fetch -- --missing` fetches every season since `OLDEST_SEASON` that you don't have. |
 | A past season looks incomplete | `npm run fetch -- --repair` retries just the seasons with gaps recorded in `data/index.json`. |
 | `npm run fetch` stops at the team game log | stats.wnba.com refused the core request from your network. Try again; if it persists, your IP may be temporarily blocked - try a different network. |
