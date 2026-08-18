@@ -6,6 +6,7 @@ import {
   ScatterChart, Scatter, ZAxis,
 } from "recharts";
 import OnOffChart from "./OnOffChart.jsx";
+import PlaymakingChart from "./PlaymakingChart.jsx";
 import RotationChart from "./RotationChart.jsx";
 import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
@@ -585,6 +586,9 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
           <SourceNote source={src("scoringShare")} />
         </section>
       </div>
+
+      {/* Playmaking — assists against the turnovers they cost */}
+      <PlaymakingChart roster={roster} stale={stale.roster} source={src("playmaking")} />
 
       {/* Shooting by zone — court map + numbers */}
       <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume" stale={stale.shotZones} source={src("teamShotZones")}>

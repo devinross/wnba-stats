@@ -130,6 +130,16 @@ const SOURCES = {
     formula: "Each player's points ÷ the roster's combined points.",
   }),
 
+  playmaking: ({ season, teamId }) => ({
+    label: "Team · Players Traditional (season totals)",
+    url: `${STATS_HOST}/team/${teamId}/players-traditional/?${qs({
+      ...SEASON(season),
+      PerMode: "Totals",
+    })}`,
+    formula:
+      "Assists and turnovers per game are each player's season total ÷ games played; the ratio is total assists ÷ total turnovers.",
+  }),
+
   playerAdv: ({ season, teamId }) => ({
     label: "Players · Advanced",
     url: `${STATS_HOST}/players/advanced/?${qs({
@@ -232,7 +242,7 @@ const SOURCES = {
 // known. Listed explicitly rather than sniffed off the builder's source, which
 // a minifier would rewrite.
 const TEAM_SCOPED = new Set([
-  "games", "roster", "teamShooting", "scoringShare",
+  "games", "roster", "teamShooting", "scoringShare", "playmaking",
   "playerAdv", "playerLog", "playerShotZones", "onOff", "lineups", "rotation",
   "shotTypes", "playerShotTypes",
 ]);

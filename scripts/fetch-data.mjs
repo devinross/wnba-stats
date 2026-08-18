@@ -703,21 +703,22 @@ function shapeLineups(rows) {
 // so it would need roster name-matching; gamerotation gives person ids on both
 // sides of the swap).
 //
-// Per game means ~570 requests for a full season against an endpoint that
-// answers a single cold request in ~300ms and then degrades badly under
-// sustained use. Measured from one IP over an afternoon: the first pass ran
-// near 100%, a 44-game pass at 500ms spacing came back 50%, and by the third
-// pass it was under 40% — and 2026 fared consistently worse than 2025 in the
-// same run (1/10 vs 4/10), some of its 500s arriving only after a 30-second
-// server-side timeout. So the failures are part throttling, part the current
-// season being thinner on the backend, and neither is worth fighting inside a
-// single run.
+// Per game means ~570 requests for a full season against an endpoint that is
+// slow and lossy in equal measure. A game nobody has asked for recently takes
+// the origin ~30 seconds to build, and a good share of the current season comes
+// back 500 at the end of that wait rather than 200 — a sample of eight missing
+// 2026 games answered twice and 500'd six times, every one of them after the
+// full half minute. Both outcomes are then edge-cached, so a game that failed
+// is quick to fail again for a while. On top of that the endpoint degrades
+// under sustained use: measured from one IP over an afternoon, a 44-game pass
+// at 500ms spacing came back 50%, and by the third pass under 40%.
 //
 // The design follows from that: every game is cached to its own file and never
 // refetched, one retry rather than an escalating chain, a small fixed number of
-// games attempted per run, and whatever fails is simply left for tomorrow. A
-// season fills in over several nights instead of one long run, and no run is
-// unbounded.
+// games attempted per run, and whatever fails is simply left for another night.
+// A season fills in over several nights instead of one long run, and no run is
+// unbounded. Because a run only gets a few games, which few it picks matters —
+// see the attempt ledger below.
 //
 //     public/data/<season>/rotations/<gameId>.json
 //
@@ -728,11 +729,21 @@ function shapeLineups(rows) {
 
 const ROTATION_DELAY_MS = 1200; // slower than the rest: this endpoint throttles
 const ROTATION_BACKOFF_MS = [0, 4000]; // one retry; the rest is tomorrow's problem
-// A rotation that is coming back at all comes back in about 300ms. A request
-// still open after eight seconds is one of the server-side stalls that
-// eventually 500s at thirty — waiting out the global timeout for those turns a
-// 20-minute backfill into a multi-hour one, so this step gives up early.
-const ROTATION_TIMEOUT_MS = 8000;
+// This endpoint is edge-cached, and the two cases look nothing alike:
+//
+//   warm (someone has asked for this game before)   ~0.1-0.4s
+//   cold (the origin has to build the response)     ~27-31s, hit or miss
+//
+// A cold game sits open for about half a minute and then answers — sometimes
+// 200 with the stints, more often 500 — and whichever it was is cached, so the
+// next request for that game is instant. An earlier version of this read the
+// warm number as "a rotation that is coming back comes back in ~300ms" and cut
+// requests off at eight seconds, which is inside the dead zone where a cold
+// game has told us nothing yet: every cold request aborted, successes included,
+// so nothing new was ever fetched once the warm games ran out. The ceiling here
+// sits past the origin's own ~30s timeout instead, so a cold game gets to
+// finish and say which of the two it was.
+const ROTATION_TIMEOUT_MS = 35000;
 // The schedule is cut into blocks this size for the "quarter of the season"
 // toggles. A WNBA regular season is 44 games, so eleven is exactly a quarter;
 // a season of a different length just gets a short final block.
@@ -758,6 +769,32 @@ const REGULATION_MIN = 40; // the heat map's x-axis; overtime is counted in the
 
 const rotationPath = (dir, season, gameId) =>
   join(dir, String(season), "rotations", `${gameId}.json`);
+
+// ----- the attempt ledger -----
+// A run attempts a handful of games and takes them from the front of the
+// missing list, so without a memory of what it already tried it picks the same
+// handful every night. That is fine when a failure is bad luck and fatal when
+// it isn't: the games at the front of 2026's backlog are ones the origin 500s
+// on every time, and they sat there blocking the queue while games later in the
+// season that answer fine were never reached at all.
+//
+// So failures are written down. Games that have never been tried go first,
+// then games tried once, and so on — the backlog rotates, every game gets its
+// turn, and a game that is simply not there costs one attempt per pass through
+// instead of every attempt this step will ever make. Successes drop out of the
+// ledger with their file on disk; the entries that remain are a useful record
+// in their own right of which games the endpoint won't answer for.
+const attemptsPath = (dir, season) =>
+  join(dir, String(season), "rotations", "_attempts.json");
+
+async function readAttempts(dir, season) {
+  try {
+    const j = JSON.parse(await readFile(attemptsPath(dir, season), "utf8"));
+    return j && typeof j === "object" ? j : {};
+  } catch (_) {
+    return {};
+  }
+}
 
 /**
  * One game's stints, in the compact shape that goes to disk. Times are tenths
@@ -811,14 +848,27 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
     else missing.push(id);
   }
 
-  // Oldest first (the order the schedule came in), so a backlog drains from the
-  // start of the season rather than leaving holes scattered through it.
-  const queue = limit > 0 ? missing.slice(0, limit) : missing;
+  // Least-tried first, and within that oldest first (the order the schedule
+  // came in), so a backlog drains from the start of the season rather than
+  // leaving holes scattered through it — but never at the cost of getting
+  // stuck on the same failures, which is what plain oldest-first did.
+  const attempts = await readAttempts(dir, season);
+  const triedBefore = (id) => (attempts[id] && attempts[id].n) || 0;
+  const ordered = missing
+    .map((id, i) => ({ id, i }))
+    .sort((a, b) => triedBefore(a.id) - triedBefore(b.id) || a.i - b.i)
+    .map((m) => m.id);
+  const queue = limit > 0 ? ordered.slice(0, limit) : ordered;
   const deferred = missing.length - queue.length;
+  // How many of this run's picks are games we've failed on before, which is the
+  // difference between "the backfill is working through the season" and "the
+  // backfill is on its third lap of games that don't exist".
+  const retries = queue.filter((id) => triedBefore(id) > 0).length;
 
-  // Roughly what the loop below costs if nothing fails: one request (~0.3s on a
-  // good day) plus the fixed delay per game. Failures cost more — timeout plus
-  // backoff — but the point is to set an expectation, not to predict.
+  // Roughly what the loop below costs. Every game here is one the cache has
+  // never been asked for, so the honest unit is the cold ~30s rather than the
+  // warm ~0.3s — and a game that fails costs about the same as one that
+  // answers. The point is to set an expectation, not to predict.
   if (onPlan) {
     onPlan({
       total: gameIds.length,
@@ -826,7 +876,10 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
       missing: missing.length,
       queued: queue.length,
       deferred,
-      estMs: queue.length * (ROTATION_DELAY_MS + 400),
+      retries,
+      // A cold game is ~30s whether it answers or not, so that — not the warm
+      // ~0.3s — is what a run of new games actually costs.
+      estMs: queue.length * (ROTATION_TIMEOUT_MS + ROTATION_DELAY_MS),
     });
   }
 
@@ -858,8 +911,10 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
     if (game) {
       await writeJson(rotationPath(dir, season, id), game);
       byGame.set(id, game);
+      delete attempts[id]; // the file on disk is the record now
     } else {
       failed.push({ id, error: lastErr });
+      attempts[id] = { n: triedBefore(id) + 1, last: new Date().toISOString().slice(0, 10), error: lastErr };
     }
     if (onProgress) {
       onProgress({
@@ -878,6 +933,10 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
     await sleep(ROTATION_DELAY_MS);
   }
 
+  // One write for the run rather than one per game: this is a bookkeeping file,
+  // and a nightly commit should carry a single small diff of it.
+  if (queue.length) await writeJson(attemptsPath(dir, season), attempts);
+
   return {
     byGame,
     cached: gameIds.length - missing.length,
@@ -885,6 +944,7 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
     failed,
     ranOut,
     deferred, // held back by the per-run cap, not by failure or the budget
+    retries, // of this run's picks, how many we had already failed on before
   };
 }
 
@@ -1644,15 +1704,19 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     try {
       const res = await fetchRotations(outDir, season, gameIds, {
         limit: rotationLimit,
-        onPlan: ({ total, cached, missing, queued, deferred, estMs }) => {
+        onPlan: ({ total, cached, missing, queued, deferred, retries, estMs }) => {
           if (TTY || !missing) return;
           // Without a terminal this is the only chance to say how long the step
           // is about to sit there before the first game comes back.
           const held = deferred ? ` · ${deferred} held for later runs (cap ${rotationLimit}/run)` : "";
+          // A cold game takes the origin half a minute either way, so the
+          // estimate is a worst case, not a promise — say so rather than
+          // implying a run that lands in a minute.
+          const again = retries ? `, ${retries} tried before` : "";
           logLine(
             `      ${season} rotations: ${total} games on the schedule · ${cached} already on disk · ` +
-              `${missing} still missing → fetching ${queued} now` +
-              ` (~${Math.max(1, Math.round(estMs / 60000))} min if they all answer)${held}`
+              `${missing} still missing → fetching ${queued} now${again}` +
+              ` (up to ~${Math.max(1, Math.round(estMs / 60000))} min; a cold game is ~30s either way)${held}`
           );
         },
         onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, players }) => {
@@ -1691,7 +1755,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       const bits = [`${res.byGame.size}/${gameIds.length} games`];
       if (res.cached) bits.push(`${res.cached} cached`);
       if (res.fetched) bits.push(`${res.fetched} new`);
-      if (res.failed.length) bits.push(`${res.failed.length} failed — will retry next run`);
+      if (res.failed.length) bits.push(`${res.failed.length} failed — requeued behind the untried games`);
       if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(ROTATION_BUDGET_MS / 60000)}min budget)`);
       if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${rotationLimit}/run)`);
       const summary = bits.join(" · ");
