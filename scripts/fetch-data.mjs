@@ -979,6 +979,7 @@ async function fetchRotations(dir, season, gameIds, { onPlan, onProgress, limit 
         ms: Date.now() - startedAt,
         players: game ? Object.keys(game.names).length : 0,
         stints: game ? game.stints.length : 0,
+        deadline,
       });
     }
     await sleep(ROTATION_DELAY_MS);
@@ -2074,51 +2075,64 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     // the wire rather than an opaque 1022600001.
     const gameLabel = makeGameLabel(rowsByGame, abbrById);
     begin(`  • ${season} rotations … `);
-    // begin() leaves its line open for the ticker to overwrite. In a log there
-    // is no ticker, so the first per-game line has to close it first.
-    let lineOpen = true;
-    const logLine = (line) => {
-      if (lineOpen) {
-        process.stdout.write("\n");
-        lineOpen = false;
-      }
-      console.log(line);
-    };
+    // Running totals across the pass, so each reckoning line can say what the
+    // run collected rather than only how far along it is.
+    let runPlayers = 0, runStints = 0, runOk = 0;
+    const stepStartedAt = Date.now();
     try {
       const res = await fetchRotations(outDir, season, gameIds, {
         limit: rotationLimit,
         onPlan: ({ total, cached, missing, queued, deferred, retries, estMs }) => {
-          if (TTY || !missing) return;
-          // Without a terminal this is the only chance to say how long the step
-          // is about to sit there before the first game comes back.
+          if (!missing) {
+            logDuring(`      ${season} rotations: all ${total} games already on disk — nothing to fetch.`);
+            return;
+          }
           const held = deferred ? ` · ${deferred} held for later runs (cap ${rotationLimit}/run)` : "";
           // A cold game takes the origin half a minute either way, so the
           // estimate is a worst case, not a promise — say so rather than
           // implying a run that lands in a minute.
-          const again = retries ? `, ${retries} tried before` : "";
-          logLine(
+          const again = retries ? `, ${retries} of them tried before` : "";
+          logDuring(
             `      ${season} rotations: ${total} games on the schedule · ${cached} already on disk · ` +
               `${missing} still missing → fetching ${queued} now${again}` +
               ` (up to ~${Math.max(1, Math.round(estMs / 60000))} min; a cold game is ~30s either way)${held}`
           );
+          runPlayers = 0; runStints = 0; runOk = 0;
         },
-        onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, players }) => {
+        // One permanent line per game, in a terminal as well as a log. Each one
+        // is tens of seconds of wall clock, so this isn't chatty — it's the
+        // difference between a run you can watch move and one that looks hung.
+        onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, players, stints, deadline }) => {
           const label = gameLabel(id);
-          if (TTY) {
-            const note = `${done_}/${total} ${label}${failed ? ` (${failed} failed)` : ""}`;
-            process.stdout.write(`\r  • ${season} rotations … ${note}${CLEAR_EOL}`);
-            return;
+          const secs = (ms / 1000).toFixed(1);
+          // This endpoint is bimodal because of edge caching, and which mode a
+          // game landed in explains the whole step's runtime.
+          const temp = ms < 3000 ? "warm" : ms < 20000 ? "tepid" : "cold";
+          const retried = tries > 1 ? ` · ${tries} tries` : "";
+
+          if (ok) {
+            runOk++; runPlayers += players; runStints += stints;
+            logDuring(
+              `      [${stamp()}] ${season} rotations ${String(done_).padStart(2)}/${total}  ${label.padEnd(20)} … ` +
+                `${players} players · ${stints} stints · ${temp} ${secs}s${retried}`
+            );
+          } else {
+            logDuring(
+              `      [${stamp()}] ${season} rotations ${String(done_).padStart(2)}/${total}  ${label.padEnd(20)} … ` +
+                `FAILED ${error || "unknown"} · ${temp} ${secs}s${retried} — requeued`
+            );
           }
-          // One line per game in the log. Each one is a second or more of wall
-          // clock, so this isn't chatty — it's the difference between a nightly
-          // run that looks hung and one you can watch move.
-          const outcome = ok
-            ? `${players} players${tries > 1 ? ` (retry)` : ""}`
-            : `FAILED: ${error || "unknown"}`;
-          logLine(
-            `      [${stamp()}] ${season} rotations ${done_}/${total}  ${label} … ` +
-              `${outcome} · ${(ms / 1000).toFixed(1)}s`
-          );
+
+          if (done_ % 10 === 0 || done_ === total) {
+            const left = total - done_;
+            const perGame = (Date.now() - stepStartedAt) / done_;
+            const eta = Math.min(left * perGame, Math.max(0, deadline - Date.now()));
+            logDuring(
+              `      ── ${done_}/${total} attempted · ${runOk} answered, ${failed} failed · ` +
+                `${runStints} stints across ${runPlayers} player-games · ` +
+                `${left ? `~${Math.max(1, Math.round(eta / 60000))} min left` : "done"}`
+            );
+          }
         },
       });
       // Each team's schedule in date order — the same sort buildGames uses, so
@@ -2142,20 +2156,38 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(ROTATION_BUDGET_MS / 60000)}min budget)`);
       if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${rotationLimit}/run)`);
       const summary = bits.join(" · ");
-      // If per-game lines already closed the label line, the summary needs to
-      // carry the label itself instead of finishing a line that's long gone.
-      done(lineOpen ? summary : `  • ${season} rotations … ${summary}`);
+      // In a terminal logDuring restores the ticker, so done() redraws the label
+      // itself and the summary must not repeat it. In a log the label line is
+      // long gone, so the summary has to carry it.
+      done(lineWasBroken() ? `  • ${season} rotations … ${summary}` : summary);
+
       if (res.failed.length) {
-        // One line for the reasons, not one per game: this endpoint fails in
-        // clusters and the pattern (all of them, or three of two hundred) is
-        // what matters. The matchups follow so a failure is identifiable
-        // without matching game ids by hand.
-        const reasons = [...new Set(res.failed.map((f) => f.error))].slice(0, 3);
-        console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons.join(" / ")}`);
+        // Grouped by reason with a count, not one line per game: this endpoint
+        // fails in clusters and the pattern (all of them, or three of two
+        // hundred) is what matters. The matchups follow so a failure is
+        // identifiable without matching game ids by hand.
+        const byReason = new Map();
+        for (const f of res.failed) byReason.set(f.error, (byReason.get(f.error) || 0) + 1);
+        const reasons = [...byReason].map(([why, n]) => `${n}× ${why}`).join(" / ");
+        console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons}`);
         const labels = res.failed.slice(0, 8).map((f) => gameLabel(f.id));
         const more = res.failed.length - labels.length;
         // " / " between games: the labels have their own "·" in them.
         console.log(`      ${labels.join(" / ")}${more > 0 ? ` / +${more} more` : ""}`);
+        console.log(`      They go to the back of the queue; the next run tries the untried games first.`);
+      }
+
+      // What the season's rotations now cover, so a thin team is visible here
+      // rather than only as an empty heat map on the site.
+      const built = [...rotationByTeam.values()];
+      if (built.length) {
+        const games = built.map((t) => t.games).sort((a, b) => a - b);
+        // Teams don't all play the same number of games, so the coverage is a
+        // range over teams rather than a fraction of one team's schedule.
+        console.log(
+          `      built: ${built.length}/${teamIds.length} teams · ` +
+            `${games[0]}-${games[games.length - 1]} games each`
+        );
       }
       if (!res.byGame.size) rotationErr = "No games returned rotation data.";
     } catch (e) {
