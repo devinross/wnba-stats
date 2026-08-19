@@ -518,6 +518,29 @@ function fmtDate(iso) {
   if (!m || !d) return String(iso);
   return `${MONTHS[m - 1]} ${d}`;
 }
+/**
+ * A game id as "CHI @ MIN · Aug 14" — who played and when. Home is the side
+ * whose MATCHUP reads " vs" (the away row reads " @ "), so the two teams come
+ * out in the order a schedule prints them rather than whatever order the rows
+ * arrived in.
+ *
+ * Returns a function because both per-game backfills (rotations and assists)
+ * label their progress lines this way, and neither should be guessing at the
+ * home side on its own.
+ */
+function makeGameLabel(rowsByGame, abbrById) {
+  return (id) => {
+    const pair = rowsByGame.get(id) || [];
+    if (!pair.length) return String(id);
+    const when = pair[0].GAME_DATE ? ` · ${fmtDate(pair[0].GAME_DATE)}` : "";
+    if (pair.length < 2) return `${String(pair[0].MATCHUP || id)}${when}`;
+    const home = pair.find((r) => String(r.MATCHUP || "").includes(" vs")) || pair[1];
+    const away = pair.find((r) => r !== home) || pair[0];
+    const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
+    return `${ab(away)} @ ${ab(home)}${when}`;
+  };
+}
+
 const n = (v) => (v == null ? 0 : Number(v) || 0);
 const sumPts = (logs) => logs.reduce((a, l) => a + l.pts, 0);
 const r1 = (v) => Math.round(n(v) * 10) / 10;
@@ -2049,16 +2072,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     const gameIds = [...rowsByGame.keys()];
     // "LVA @ SEA · Aug 12" for a game id, so the log says which matchup is on
     // the wire rather than an opaque 1022600001.
-    const gameLabel = (id) => {
-      const pair = rowsByGame.get(id) || [];
-      if (!pair.length) return String(id);
-      const when = pair[0].GAME_DATE ? ` · ${fmtDate(pair[0].GAME_DATE)}` : "";
-      if (pair.length < 2) return `${String(pair[0].MATCHUP || id)}${when}`;
-      const home = pair.find((r) => String(r.MATCHUP || "").includes(" vs")) || pair[1];
-      const away = pair.find((r) => r !== home) || pair[0];
-      const ab = (r) => r.TEAM_ABBREVIATION || abbrById.get(r.TEAM_ID) || "???";
-      return `${ab(away)} @ ${ab(home)}${when}`;
-    };
+    const gameLabel = makeGameLabel(rowsByGame, abbrById);
     begin(`  • ${season} rotations … `);
     // begin() leaves its line open for the ticker to overwrite. In a log there
     // is no ticker, so the first per-game line has to close it first.
@@ -2164,12 +2178,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         : "the shot chart returned no makes to match assists against";
     } else {
       const gameIds = [...rowsByGame.keys()];
-      const teamOf = (id) => abbrById.get(id) || "";
-      const gameLabel = (id) => {
-        const rows = rowsByGame.get(id) || [];
-        const sides = rows.map((r) => teamOf(r.TEAM_ID)).filter(Boolean);
-        return sides.length === 2 ? `${sides[1]}@${sides[0]}` : id;
-      };
+      const gameLabel = makeGameLabel(rowsByGame, abbrById);
       begin(`  • ${season} assists … `);
       // Running totals across the whole pass, so each reckoning line can say
       // what the run has actually collected rather than just how far it is.
@@ -2210,12 +2219,12 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
               runOk++; runMade += made; runAssisted += assisted; runPairs += pairs;
               const share = made ? Math.round((assisted / made) * 100) : 0;
               logDuring(
-                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(9)} … ` +
+                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(20)} … ` +
                   `${assisted}/${made} makes assisted (${share}%) · ${pairs} pairs · ${temp} ${secs}s${retried}`
               );
             } else {
               logDuring(
-                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(9)} … ` +
+                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(20)} … ` +
                   `FAILED ${error || "unknown"} · ${temp} ${secs}s${retried} — requeued`
               );
             }
