@@ -409,6 +409,34 @@ The `leaguedash*` endpoints are sent the WNBA's standard filter parameters but
 **not** the NBA-only `TwoWay` / `ISTRound` params, which make the WNBA versions
 return errors.
 
+### Per-game endpoints (backfilled over several nights)
+
+Two datasets can't be had league-wide — they're one request per game, so they're
+cached to their own file per game and never refetched. A run attempts only a
+handful, so a season fills in over several nights rather than in one long pass:
+
+- `gamerotation` -> substitution timing, in `public/data/<season>/rotations/`.
+- `playbyplayv2` -> every made field goal with its scorer and its assister, in
+  `public/data/<season>/assists/`. Joined to the season shot chart on
+  `GAME_EVENT_ID` = `EVENTNUM` to learn what kind of shot each pass created.
+  This powers the assist network, the "what each pass creates" breakdown, and
+  each scorer's assisted share.
+
+Both accept `--no-rotations` / `--no-assists` to skip, and
+`--rotation-limit N` / `--assist-limit N` to fetch more than the nightly cap
+(`0` for no cap). Expect roughly a third of attempts to return HTTP 500 after a
+~30s wait; failures are written to an `_attempts.json` ledger so the backlog
+rotates instead of jamming on the same games.
+
+### What is *not* available
+
+There is **no Synergy play-type data for the WNBA** — no pick-and-roll, no
+isolation, no post-up frequency. `synergyplaytypes` answers HTTP 500, and the
+whole tracking family (`leaguedashptstats`, `playerdashptpass`,
+`leaguehustlestatsplayer` and its screen assists) answers 200 with zero rows.
+No feed records screens at all. So a pass is described here by the shot at the
+end of it, never by the action that created it.
+
 ## Checking the numbers against wnba.com
 
 Every section on the site carries a **source footnote** linking to the
@@ -474,6 +502,8 @@ public/
   data/index.json       which seasons exist, when each was fetched, what's missing
   data/<season>/league.json      that season's team list + league-wide charts
   data/<season>/teams/<id>.json  one file per team (its games, roster, on/off, lineups)
+  data/<season>/rotations/<g>.json  one file per game's substitutions (backfilled nightly)
+  data/<season>/assists/<g>.json    one file per game's made field goals + who assisted them
 src/
   main.jsx              boots React
   App.jsx               season + team dropdowns, tabs, routing, loading / error states
@@ -489,6 +519,8 @@ src/
   Dashboard.jsx         per-player view (Players tab)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
+  PlaymakingChart.jsx   assists vs turnovers per player, with assist-to-turnover ratio
+  AssistCharts.jsx      assist network matrix, what each pass creates, assisted share
   StaleNote.jsx         the "showing the numbers from ..." note on carried-over sections
   index.css             brand tokens, typography, shared .hf-* classes
 server/

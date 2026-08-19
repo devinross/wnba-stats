@@ -531,7 +531,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
-    lineups = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, errors = {},
+    lineups = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, errors = {},
   } = bundle;
   const teamLoading = teamState.loading || seasonLoading;
   const player = roster[sel] || null;
@@ -744,6 +744,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           shotZones={shotZones}
           shotTypes={shotTypes}
           rotation={rotation}
+          assists={assists}
           leagueShotZones={leagueShotZones}
           leagueShotTypes={leagueShotTypes}
           teamZoneWins={teamZoneWins}

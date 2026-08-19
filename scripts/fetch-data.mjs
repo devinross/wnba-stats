@@ -13,6 +13,9 @@
 //     npm run fetch -- --repair         retry only the seasons with gaps in them
 //     npm run fetch -- --out <dir>      write somewhere other than public/data
 //     npm run fetch -- --no-rotations   skip the per-game rotation backfill
+//     npm run fetch -- --no-assists     skip the per-game play-by-play backfill
+//     npm run fetch -- --assist-limit 25   fetch more assist games than the
+//                                       nightly cap (0 for no cap)
 //     npm run fetch -- --rotation-limit 25   fetch more rotations than the
 //                                       nightly cap of 5 (0 = no cap)
 //
@@ -23,11 +26,12 @@
 //     public/data/2026/league.json      teams + league-wide sets for that season
 //     public/data/2026/teams/<id>.json  one file per team
 //     public/data/2026/rotations/<g>.json  one file per game's substitutions
+//     public/data/2026/assists/<g>.json    one file per game's made field goals
 //
-// Everything but the rotations is a handful of league-wide requests. Rotations
-// are one request per game, so they're cached per game and never refetched —
-// the first run on a season is long, every run after it is short. See the
-// "rotations" section below.
+// Everything but the rotations and assists is a handful of league-wide
+// requests. Those two are one request per game, so they're cached per game and
+// never refetched — the first run on a season is long, every run after it is
+// short. See the "rotations" and "assists" sections below.
 //
 // Run from a machine whose IP stats.wnba.com doesn't block (your Mac is fine;
 // many shared hosts are not). It prints the real status of every request.
@@ -188,6 +192,30 @@ function begin(label) {
   }, 1000);
   live.timer.unref(); // a ticking line must never be what keeps the run alive
 }
+
+// Write a permanent line in the middle of a step that is still running. On a
+// terminal that means rubbing out the ticker, printing, and putting the ticker
+// back; in a log there is no ticker to work around. A long backfill uses this to
+// report every game as it lands instead of leaving one line to guess at.
+function logDuring(line) {
+  if (live) {
+    // On a terminal the ticker owns the current line: rub it out, print, then
+    // put it back, so the step still reads as running. In a log there is no
+    // ticker but begin()'s label line is still open with no newline on it, so
+    // the first line written has to close it — and once closed, the step's
+    // final line has to carry the label itself (see `broke` at the call site).
+    if (TTY) process.stdout.write(`\r${CLEAR_EOL}`);
+    else if (!live.broke) {
+      process.stdout.write("\n");
+      live.broke = true;
+    }
+  }
+  console.log(line);
+  if (TTY && live) process.stdout.write(`${live.label}${elapsed(live.started)}${CLEAR_EOL}`);
+}
+
+/** Whether logDuring has closed the line begin() opened. */
+const lineWasBroken = () => Boolean(live && live.broke);
 
 // A step that threw past its own handler: stop the ticker and end the line, so
 // the error that follows isn't written over a half-finished one.
@@ -1081,6 +1109,340 @@ function aggregateRotations(byGame, teamIds, orderByTeam, segmentSize = SEGMENT_
   return out;
 }
 
+// ----- assists (who created what) --------------------------------------------
+//
+// Everything above can say who passed and who scored, but never that this
+// player's pass produced that player's shot. That link lives only in the play-
+// by-play: `playbyplayv2` marks every made field goal with PLAYER1_ID as the
+// scorer and PLAYER2_ID as the assister — 0 when nobody assisted — as person
+// ids rather than names, so no roster matching is needed to read it.
+//
+// What play-by-play does not carry in a usable form is what kind of shot was
+// created; its description is prose. That comes free from `shotchartdetail`,
+// which a run already fetches once for the whole season and which stamps every
+// attempt with a GAME_EVENT_ID. That id is the play-by-play's EVENTNUM, so the
+// two join exactly — measured on a full game, all 65 made field goals matched
+// with no scorer disagreement, overtime included, provided the play-by-play is
+// asked for enough periods (see PBP_PARAMS).
+//
+// This is emphatically NOT Synergy play-type data, and nothing here should be
+// read as pick-and-roll or isolation frequency. stats.wnba.com publishes no
+// Synergy data for this league — `synergyplaytypes` answers 500, and the whole
+// tracking family (leaguedashptstats, playerdashptpass, the hustle stats that
+// carry screen assists) answers 200 with zero rows — and no feed records
+// screens at all. So a pass is described by the shot at the end of it, in the
+// same buckets the shot-type breakdown already uses.
+//
+// The cost has the same shape as rotations: one request per game, ~10s when the
+// edge is warm and ~30s when it isn't, with a fair share of 500s arriving at
+// the end of that wait. So it borrows that section's design wholesale — a small
+// cached file per game, a handful of games per run, an attempt ledger so the
+// backlog rotates instead of jamming on games that never answer, and whatever
+// fails left for another night.
+//
+//     public/data/<season>/assists/<gameId>.json
+//
+// A season is useful long before it is complete, so every figure built here
+// travels with the number of games behind it and the UI says so.
+
+const PBP_DELAY_MS = 1200;
+const PBP_BACKOFF_MS = [0, 4000]; // one retry, as with rotations
+const PBP_TIMEOUT_MS = 35000;
+const PBP_BUDGET_MS = 10 * 60 * 1000;
+const PBP_MAX_PER_RUN = 5;
+
+// EndPeriod has to clear overtime. Asking for four periods silently truncates
+// an OT game — the same game returned 58 made field goals at EndPeriod=4 and 65
+// at EndPeriod=14, and the seven it dropped were real shots the shot chart
+// still knew about, which would have shown up as a permanent join gap.
+const PBP_PARAMS = (gameId) => ({ GameID: gameId, StartPeriod: "1", EndPeriod: "14" });
+
+const MADE_FIELD_GOAL = 1; // EVENTMSGTYPE
+
+const assistPath = (dir, season, gameId) =>
+  join(dir, String(season), "assists", `${gameId}.json`);
+const assistAttemptsPath = (dir, season) =>
+  join(dir, String(season), "assists", "_attempts.json");
+
+/**
+ * One game's made field goals, in the compact shape that goes to disk:
+ * [eventNum, scorerId, assisterId], with assisterId 0 for an unassisted make.
+ *
+ * Misses are not kept. Everything built from this is about a shot that went in
+ * — who made it and who set it up — and keeping the other ~45% of attempts
+ * would double a file that a browser downloads for nothing.
+ */
+function shapeAssistEvents(json) {
+  const set = ((json && json.resultSets) || []).find((s) => s && s.name === "PlayByPlay");
+  if (!set || !set.rowSet) return null;
+  const H = Object.fromEntries(set.headers.map((h, i) => [h, i]));
+  const made = [];
+  for (const row of set.rowSet) {
+    if (row[H.EVENTMSGTYPE] !== MADE_FIELD_GOAL) continue;
+    const scorer = row[H.PLAYER1_ID];
+    if (!scorer) continue;
+    made.push([row[H.EVENTNUM], scorer, row[H.PLAYER2_ID] || 0]);
+  }
+  return made.length ? { made } : null;
+}
+
+/** A game already on disk, or null if we've never successfully fetched it. */
+async function readAssistEvents(dir, season, gameId) {
+  try {
+    const g = JSON.parse(await readFile(assistPath(dir, season, gameId), "utf8"));
+    return g && Array.isArray(g.made) ? g : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function readAssistAttempts(dir, season) {
+  try {
+    const j = JSON.parse(await readFile(assistAttemptsPath(dir, season), "utf8"));
+    return j && typeof j === "object" ? j : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * Fill in every game of the season not already cached, and return the full set
+ * keyed by game id. Mirrors fetchRotations, for the reasons in the section note
+ * above: least-tried games first so the backlog rotates, a hard time budget,
+ * and failures written to a ledger rather than retried into the ground.
+ */
+async function fetchAssistEvents(dir, season, gameIds, { onPlan, onProgress, limit = PBP_MAX_PER_RUN } = {}) {
+  const byGame = new Map();
+  const missing = [];
+  for (const id of gameIds) {
+    const cached = await readAssistEvents(dir, season, id);
+    if (cached) byGame.set(id, cached);
+    else missing.push(id);
+  }
+
+  const attempts = await readAssistAttempts(dir, season);
+  const triedBefore = (id) => (attempts[id] && attempts[id].n) || 0;
+  const ordered = missing
+    .map((id, i) => ({ id, i }))
+    .sort((a, b) => triedBefore(a.id) - triedBefore(b.id) || a.i - b.i)
+    .map((m) => m.id);
+  const queue = limit > 0 ? ordered.slice(0, limit) : ordered;
+  const deferred = missing.length - queue.length;
+
+  if (onPlan) {
+    onPlan({
+      total: gameIds.length,
+      cached: byGame.size,
+      missing: missing.length,
+      queued: queue.length,
+      deferred,
+      retries: queue.filter((id) => triedBefore(id) > 0).length,
+      estMs: queue.length * (PBP_TIMEOUT_MS + PBP_DELAY_MS),
+    });
+  }
+
+  const failed = [];
+  const deadline = Date.now() + PBP_BUDGET_MS;
+  let ranOut = 0;
+  for (const [i, id] of queue.entries()) {
+    if (Date.now() > deadline) {
+      ranOut = queue.length - i;
+      break;
+    }
+    let game = null;
+    let lastErr = "";
+    let tries = 0;
+    const startedAt = Date.now();
+    for (const wait of PBP_BACKOFF_MS) {
+      if (wait) await sleep(wait);
+      tries += 1;
+      try {
+        game = shapeAssistEvents(
+          await statsFetch("playbyplayv2", PBP_PARAMS(id), { timeoutMs: PBP_TIMEOUT_MS })
+        );
+        if (game) break;
+        lastErr = "no made-field-goal rows returned";
+      } catch (e) {
+        lastErr = e.message;
+      }
+    }
+    if (game) {
+      await writeJson(assistPath(dir, season, id), game);
+      byGame.set(id, game);
+      delete attempts[id];
+    } else {
+      failed.push({ id, error: lastErr });
+      attempts[id] = { n: triedBefore(id) + 1, last: new Date().toISOString().slice(0, 10), error: lastErr };
+    }
+    if (onProgress) {
+      const assistedRows = game ? game.made.filter((m) => m[2]) : [];
+      onProgress({
+        done: i + 1, total: queue.length, failed: failed.length, id,
+        ok: Boolean(game), error: lastErr, tries, ms: Date.now() - startedAt,
+        made: game ? game.made.length : 0,
+        assisted: assistedRows.length,
+        // Distinct passer→finisher combinations in this one game: a quick read
+        // on whether the offense ran through one player or spread the ball.
+        pairs: new Set(assistedRows.map((m) => `${m[2]}:${m[1]}`)).size,
+        deadline,
+      });
+    }
+    await sleep(PBP_DELAY_MS);
+  }
+
+  if (queue.length) await writeJson(assistAttemptsPath(dir, season), attempts);
+
+  return {
+    byGame,
+    cached: gameIds.length - missing.length,
+    fetched: queue.length - failed.length - ranOut,
+    failed,
+    ranOut,
+    deferred,
+  };
+}
+
+/**
+ * The half of the join that comes from the shot chart: for every made attempt,
+ * which team took it and which bucket it belongs to, keyed by the event id the
+ * play-by-play uses. Built from the same response `shapeShotTypes` reads, so it
+ * costs no extra request.
+ *
+ * Team comes from here rather than from the roster on purpose — a player traded
+ * mid-season would otherwise have her whole season attributed to whichever club
+ * she finished it at.
+ */
+function shapeAssistContext(json) {
+  const set = ((json && json.resultSets) || []).find((s) => s && s.name === "Shot_Chart_Detail");
+  const byEvent = new Map();
+  if (!set || !set.rowSet) return byEvent;
+  const H = Object.fromEntries(set.headers.map((h, i) => [h, i]));
+  for (const row of set.rowSet) {
+    if (row[H.SHOT_MADE_FLAG] !== 1) continue;
+    const action = row[H.ACTION_TYPE];
+    if (NON_SHOT.test(action)) continue;
+    byEvent.set(`${row[H.GAME_ID]}:${row[H.GAME_EVENT_ID]}`, {
+      team: row[H.TEAM_ID],
+      bucket: classifyShot(action, row[H.SHOT_TYPE]),
+    });
+  }
+  return byEvent;
+}
+
+// How many pairs / playmakers a team file carries. Past these the tail is one
+// or two assists a season, which is noise in a chart and bytes in a download.
+const NETWORK_MAX_PAIRS = 30;
+
+// The cutoffs scale with how many games are actually on disk. A fixed threshold
+// tuned for a finished season (a pair has to connect five times, a playmaker
+// needs twenty assists) reads as "no data" for the months this backfill spends
+// filling in — which is wrong, because four games is plenty to see that a guard
+// keeps finding the same roller. Scaling instead means the charts appear as soon
+// as they mean anything and tighten as the season accumulates.
+const networkMinPair = (games) => Math.max(2, Math.round(games / 8));
+const dietMinAssists = (games) => Math.max(8, Math.round(games * 0.5));
+
+/**
+ * Roll the cached games up into the three things the team page asks of them:
+ *
+ *   network  — assister to scorer, how often (the pairs an offense runs on)
+ *   diet     — per playmaker, what her assists created, in shot-type buckets
+ *   scorers  — per scorer, how much of her scoring someone else set up
+ *
+ * `names` resolves person ids for display; entries carry their own name rather
+ * than leaning on the roster, so a player who has since been traded still reads
+ * as a person instead of a number.
+ */
+function aggregateAssists(byGame, ctx, teamIds, orderByTeam, names) {
+  const blank = () => ({ pairs: new Map(), diet: new Map(), scorers: new Map(), games: new Set() });
+  const perTeam = new Map(teamIds.map((id) => [id, blank()]));
+  // The join is the load-bearing assumption of this whole section, so it counts
+  // itself rather than dropping misses quietly. A match rate that starts sliding
+  // means the shot chart and the play-by-play have stopped agreeing — a stale
+  // shot chart, a period range that no longer covers overtime — and that should
+  // be visible in a nightly log the night it happens, not months later in a
+  // chart nobody can explain.
+  const stats = { events: 0, matched: 0, noShotRow: 0, foreignTeam: 0 };
+
+  for (const [gameId, game] of byGame) {
+    for (const [eventNum, scorer, assister] of game.made) {
+      stats.events++;
+      const hit = ctx.get(`${gameId}:${eventNum}`);
+      if (!hit) { stats.noShotRow++; continue; }
+      const t = perTeam.get(hit.team);
+      if (!t) { stats.foreignTeam++; continue; }
+      stats.matched++;
+      t.games.add(gameId);
+
+      const s = t.scorers.get(scorer) || { made: 0, assisted: 0 };
+      s.made++;
+      if (assister) s.assisted++;
+      t.scorers.set(scorer, s);
+
+      if (!assister) continue;
+
+      const key = `${assister}:${scorer}`;
+      t.pairs.set(key, (t.pairs.get(key) || 0) + 1);
+
+      const d = t.diet.get(assister) || { ast: 0, buckets: new Map() };
+      d.ast++;
+      d.buckets.set(hit.bucket, (d.buckets.get(hit.bucket) || 0) + 1);
+      t.diet.set(assister, d);
+    }
+  }
+
+  const nameOf = (id) => names.get(id) || `#${id}`;
+  const out = new Map();
+  for (const [teamId, t] of perTeam) {
+    if (!t.games.size) continue;
+    const scheduled = (orderByTeam.get(teamId) || []).length;
+
+    const network = [...t.pairs]
+      .map(([key, n]) => {
+        const [from, to] = key.split(":").map(Number);
+        return { from, fromName: nameOf(from), to, toName: nameOf(to), n };
+      })
+      .filter((p) => p.n >= networkMinPair(t.games.size))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, NETWORK_MAX_PAIRS);
+
+    const diet = [...t.diet]
+      .filter(([, d]) => d.ast >= dietMinAssists(t.games.size))
+      .map(([playerId, d]) => ({
+        playerId,
+        name: nameOf(playerId),
+        ast: d.ast,
+        buckets: [...d.buckets.entries()]
+          .map(([bucket, n]) => ({ t: bucket, n }))
+          .sort((a, b) => b.n - a.n),
+      }))
+      .sort((a, b) => b.ast - a.ast);
+
+    const scorers = [...t.scorers]
+      .map(([playerId, s]) => ({
+        playerId,
+        name: nameOf(playerId),
+        made: s.made,
+        assisted: s.assisted,
+        pct: s.made ? Math.round((s.assisted / s.made) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.made - a.made);
+
+    out.set(teamId, {
+      games: t.games.size,
+      scheduled,
+      // The cutoffs travel with the data so the page can say what it filtered
+      // rather than repeating a number that lives in this file.
+      minPair: networkMinPair(t.games.size),
+      minAssists: dietMinAssists(t.games.size),
+      network,
+      diet,
+      scorers,
+    });
+  }
+  return { byTeam: out, stats };
+}
+
 // ----- previous-snapshot fallback --------------------------------------------
 // stats.wnba.com is flaky: an endpoint that answered yesterday can return a 500
 // today, and a chart that had been on the page for weeks would simply vanish
@@ -1256,7 +1618,7 @@ function countMissing(payload) {
  * `final` marks a completed season: no schedule to look ahead at, and anything
  * reused from an earlier fetch is simply correct rather than stale.
  */
-async function fetchSeason(season, { outDir, final, nth, of, rotations = true, rotationLimit = ROTATION_MAX_PER_RUN }) {
+async function fetchSeason(season, { outDir, final, nth, of, rotations = true, rotationLimit = ROTATION_MAX_PER_RUN, assists = true, assistLimit = PBP_MAX_PER_RUN }) {
   const startedAt = Date.now();
   const which = of > 1 ? `  [season ${nth} of ${of}]` : "";
   console.log(`\n${"─".repeat(64)}\n${season}${final ? " (completed season)" : " (season in progress)"}${which}\n`);
@@ -1388,9 +1750,16 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   // unit of detail — but it is also the biggest response, hence the longer
   // timeout.
   let shotTypes = { byPlayer: new Map(), byTeam: new Map(), league: [], generic: 0 };
+  // The same response also carries the event ids the play-by-play joins on, so
+  // it is kept rather than discarded — see the assists section. Holding it costs
+  // memory for the rest of the run; refetching it would cost a second ~9MB
+  // request for data already in hand.
+  let assistCtx = new Map();
   step("shotTypes");
   try {
-    shotTypes = shapeShotTypes(await statsFetch("shotchartdetail", SHOT_CHART(season), { timeoutMs: 60000 }));
+    const shotChartJson = await statsFetch("shotchartdetail", SHOT_CHART(season), { timeoutMs: 60000 });
+    shotTypes = shapeShotTypes(shotChartJson);
+    assistCtx = shapeAssistContext(shotChartJson);
     if (!shotTypes.league.length) throw new Error("no shots returned");
     const total = shotTypes.league.reduce((a, b) => a + b.a, 0);
     done(`${total} shots · ${shotTypes.byPlayer.size} players`);
@@ -1781,6 +2150,171 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     }
   }
 
+  // ----- assists (one request per game, cached forever) -----
+  // Same backfill shape as rotations above, and the same expectation: a nightly
+  // nibble that fills a season in over several nights. It needs the shot chart
+  // to place an event on a team, so a run where that request failed produces
+  // nothing here and the previous snapshot carries the section instead.
+  let assistsByTeam = new Map();
+  let assistsErr = null;
+  if (assists) {
+    if (!assistCtx.size) {
+      assistsErr = errLeague.shotTypes
+        ? `the shot chart failed this run (${errLeague.shotTypes}), and assists are placed on a team through it`
+        : "the shot chart returned no makes to match assists against";
+    } else {
+      const gameIds = [...rowsByGame.keys()];
+      const teamOf = (id) => abbrById.get(id) || "";
+      const gameLabel = (id) => {
+        const rows = rowsByGame.get(id) || [];
+        const sides = rows.map((r) => teamOf(r.TEAM_ID)).filter(Boolean);
+        return sides.length === 2 ? `${sides[1]}@${sides[0]}` : id;
+      };
+      begin(`  • ${season} assists … `);
+      // Running totals across the whole pass, so each reckoning line can say
+      // what the run has actually collected rather than just how far it is.
+      let runMade = 0, runAssisted = 0, runPairs = 0, runOk = 0;
+      const stepStartedAt = Date.now();
+      try {
+        const res = await fetchAssistEvents(outDir, season, gameIds, {
+          limit: assistLimit,
+          // Unlike rotations, this reports every game on its own permanent
+          // line in a terminal too. A thirty-game pass is eight minutes of
+          // mostly-waiting, and a single overwriting ticker throws away the one
+          // thing worth watching — whether the endpoint is answering warm,
+          // stalling cold, or handing back 500s in a row.
+          onPlan: ({ total, cached, missing, queued, deferred, retries, estMs }) => {
+            if (!missing) {
+              logDuring(`      ${season} assists: all ${total} games already on disk — nothing to fetch.`);
+              return;
+            }
+            const again = retries ? `, ${retries} of them tried before` : "";
+            const held = deferred ? ` · ${deferred} held for later runs (cap ${assistLimit}/run)` : "";
+            logDuring(
+              `      ${season} assists: ${total} games on the schedule · ${cached} already on disk · ` +
+                `${missing} still missing → fetching ${queued} now${again}` +
+                ` (up to ~${Math.max(1, Math.round(estMs / 60000))} min; a cold game is ~30s either way)${held}`
+            );
+            runMade = 0; runAssisted = 0; runPairs = 0; runOk = 0;
+          },
+          onProgress: ({ done: done_, total, failed, id, ok, error, tries, ms, made, assisted, pairs, deadline }) => {
+            const label = gameLabel(id);
+            const secs = (ms / 1000).toFixed(1);
+            // The edge cache makes this endpoint bimodal, and which mode you
+            // are in explains everything about how long the step will take —
+            // so the line says which one it was rather than just a duration.
+            const temp = ms < 3000 ? "warm" : ms < 20000 ? "tepid" : "cold";
+            const retried = tries > 1 ? ` · ${tries} tries` : "";
+
+            if (ok) {
+              runOk++; runMade += made; runAssisted += assisted; runPairs += pairs;
+              const share = made ? Math.round((assisted / made) * 100) : 0;
+              logDuring(
+                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(9)} … ` +
+                  `${assisted}/${made} makes assisted (${share}%) · ${pairs} pairs · ${temp} ${secs}s${retried}`
+              );
+            } else {
+              logDuring(
+                `      [${stamp()}] ${season} assists ${String(done_).padStart(2)}/${total}  ${label.padEnd(9)} … ` +
+                  `FAILED ${error || "unknown"} · ${temp} ${secs}s${retried} — requeued`
+              );
+            }
+
+            // A periodic reckoning: where the run is, what it has collected, and
+            // roughly how much longer, so a backfill left running overnight can
+            // be judged from any single line of the log.
+            if (done_ % 10 === 0 || done_ === total) {
+              const left = total - done_;
+              const perGame = (Date.now() - stepStartedAt) / done_;
+              const eta = Math.min(left * perGame, Math.max(0, deadline - Date.now()));
+              const rate = runMade ? Math.round((runAssisted / runMade) * 100) : 0;
+              logDuring(
+                `      ── ${done_}/${total} attempted · ${runOk} answered, ${failed} failed · ` +
+                  `${runMade} makes, ${runAssisted} assisted (${rate}%), ${runPairs} pairs · ` +
+                  `${left ? `~${Math.max(1, Math.round(eta / 60000))} min left` : "done"}`
+              );
+            }
+          },
+        });
+
+        const orderByTeam = new Map(
+          teamIds.map((tid) => [
+            tid,
+            teamRows
+              .filter((r) => r.TEAM_ID === tid)
+              .sort((a, b) => (a.GAME_DATE < b.GAME_DATE ? -1 : 1))
+              .map((r) => r.GAME_ID),
+          ])
+        );
+        // Display names for person ids. Last row wins, so a player traded
+        // mid-season is named the same way the leaderboard names her.
+        const playerNames = new Map();
+        for (const r of playerRows) if (r.PLAYER_ID != null) playerNames.set(r.PLAYER_ID, r.PLAYER_NAME);
+
+        const built = aggregateAssists(res.byGame, assistCtx, teamIds, orderByTeam, playerNames);
+        assistsByTeam = built.byTeam;
+
+        const bits = [`${res.byGame.size}/${gameIds.length} games`];
+        if (res.cached) bits.push(`${res.cached} cached`);
+        if (res.fetched) bits.push(`${res.fetched} new`);
+        if (res.failed.length) bits.push(`${res.failed.length} failed — requeued behind the untried games`);
+        if (res.ranOut) bits.push(`${res.ranOut} left for next run (${Math.round(PBP_BUDGET_MS / 60000)}min budget)`);
+        if (res.deferred) bits.push(`${res.deferred} queued for later runs (cap ${assistLimit}/run)`);
+        // In a terminal logDuring restores the ticker, so done() redraws the
+        // label itself and the summary must not repeat it. In a log the label
+        // line is long gone, so the summary has to carry it.
+        const summary = bits.join(" · ");
+        done(lineWasBroken() ? `  • ${season} assists … ${summary}` : summary);
+
+        if (res.failed.length) {
+          // Grouped by reason, then named, so a cluster of 500s reads as one
+          // fact and the games stay identifiable without matching ids by hand.
+          const byReason = new Map();
+          for (const f of res.failed) byReason.set(f.error, (byReason.get(f.error) || 0) + 1);
+          const reasons = [...byReason].map(([why, n]) => `${n}× ${why}`).join(" / ");
+          console.log(`      ${res.failed.length} game${res.failed.length === 1 ? "" : "s"} didn't answer: ${reasons}`);
+          const labels = res.failed.slice(0, 8).map((f) => gameLabel(f.id));
+          const more = res.failed.length - labels.length;
+          console.log(`      ${labels.join(" / ")}${more > 0 ? ` / +${more} more` : ""}`);
+          console.log(`      They go to the back of the queue; the next run tries the untried games first.`);
+        }
+
+        // What the join actually produced. The match rate is the number to watch:
+        // it should sit at 100%, and anything less means the shot chart and the
+        // play-by-play have stopped agreeing about this season.
+        const st = built.stats;
+        if (st.events) {
+          const rate = ((st.matched / st.events) * 100).toFixed(1);
+          const misses = [];
+          if (st.noShotRow) misses.push(`${st.noShotRow} with no shot-chart row`);
+          if (st.foreignTeam) misses.push(`${st.foreignTeam} on a team not in this season`);
+          console.log(
+            `      join: ${st.matched}/${st.events} made field goals matched to a shot (${rate}%)` +
+              (misses.length ? ` — ${misses.join(", ")}` : "")
+          );
+        }
+
+        // And what each team ended up with, so a thin team is visible here
+        // rather than only as an empty chart on the site.
+        const covered = [...assistsByTeam.values()];
+        if (covered.length) {
+          const games = covered.map((t) => t.games).sort((a, b) => a - b);
+          const pairs = covered.reduce((a, t) => a + t.network.length, 0);
+          const playmakers = covered.reduce((a, t) => a + t.diet.length, 0);
+          console.log(
+            `      built: ${covered.length}/${teamIds.length} teams · ` +
+              `${games[0]}-${games[games.length - 1]} games each · ` +
+              `${pairs} passer→finisher pairs · ${playmakers} playmakers with a readable shot mix`
+          );
+        }
+        if (!res.byGame.size) assistsErr = "No games returned play-by-play yet.";
+      } catch (e) {
+        abandon();
+        assistsErr = e.message;
+      }
+    }
+  }
+
   // ----- per-team loops (roster, on/off, lineups) -----
   console.log(`Per-team data for ${season} (roster · on/off · lineups) — ${teamIds.length} teams, 3 requests each:`);
   const teams = [];
@@ -1873,7 +2407,10 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     const rotation = rotationByTeam.get(teamId) || null;
     if (!rotation && rotations) errors.rotation = rotationErr || "No rotation data for this team yet.";
 
-    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, upcoming, errors };
+    const teamAssists = assistsByTeam.get(teamId) || null;
+    if (!teamAssists && assists) errors.assists = assistsErr || "No play-by-play for this team's games yet.";
+
+    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, assists: teamAssists, upcoming, errors };
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
@@ -1914,7 +2451,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       if (kept) stale[key] = { at: prevAt, reason: failed };
     }
 
-    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation"];
+    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation", "assists"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");
@@ -1924,6 +2461,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         ...errors,
         upcoming: scheduleErr,
         rotation: rotations ? errors.rotation : "rotations were skipped this run (--no-rotations)",
+        assists: assists ? errors.assists : "assists were skipped this run (--no-assists)",
       },
     }));
     if (Object.keys(stale).length) bundle.stale = stale;
@@ -2142,7 +2680,7 @@ function parseSeasonRange(text) {
 }
 
 function parseArgs(argv) {
-  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true, rotationLimit: ROTATION_MAX_PER_RUN };
+  const opts = { seasons: null, mode: "current", outDir: DEFAULT_OUT_DIR, rotations: true, rotationLimit: ROTATION_MAX_PER_RUN, assists: true, assistLimit: PBP_MAX_PER_RUN };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--season" || arg === "--seasons") {
@@ -2163,6 +2701,15 @@ function parseArgs(argv) {
         throw new Error(`--rotation-limit needs a whole number of games (0 for no cap), not "${raw}".`);
       }
       opts.rotationLimit = limit;
+    } else if (arg === "--no-assists") {
+      opts.assists = false;
+    } else if (arg === "--assist-limit") {
+      const raw = argv[++i];
+      const limit = Number(raw);
+      if (!Number.isInteger(limit) || limit < 0) {
+        throw new Error(`--assist-limit needs a whole number of games (0 for no cap), not "${raw}".`);
+      }
+      opts.assistLimit = limit;
     } else if (arg === "--all") {
       opts.seasons = parseSeasonRange(`${OLDEST_SEASON}-${CURRENT_SEASON}`);
       opts.mode = "explicit";
@@ -2219,6 +2766,7 @@ async function main() {
       const entry = await fetchSeason(season, {
         outDir: opts.outDir, final, nth: i + 1, of: seasons.length,
         rotations: opts.rotations, rotationLimit: opts.rotationLimit,
+        assists: opts.assists, assistLimit: opts.assistLimit,
       });
       if (entry.failed) degraded.push({ season, failed: entry.failed, missing: entry.missing });
     } catch (e) {

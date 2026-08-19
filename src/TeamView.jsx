@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import OnOffChart from "./OnOffChart.jsx";
 import PlaymakingChart from "./PlaymakingChart.jsx";
+import { AssistNetwork, AssistDiet, AssistedShare } from "./AssistCharts.jsx";
 import RotationChart from "./RotationChart.jsx";
 import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
@@ -297,7 +298,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
   // Footnote links back to the wnba.com page each section was built from, so
   // any number here can be checked against the source it came from.
   const src = useMemo(
@@ -589,6 +590,12 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
       {/* Playmaking — assists against the turnovers they cost */}
       <PlaymakingChart roster={roster} stale={stale.roster} source={src("playmaking")} />
+
+      {/* What the passing actually produced — needs play-by-play, which fills
+          in over several nights, so each of these states its own coverage. */}
+      <AssistNetwork assists={assists} stale={stale.assists} source={src("assistNetwork")} />
+      <AssistDiet assists={assists} stale={stale.assists} source={src("assistDiet")} />
+      <AssistedShare assists={assists} stale={stale.assists} source={src("assistedShare")} />
 
       {/* Shooting by zone — court map + numbers */}
       <Section title={`${teamName} shooting by zone`} hint="court shaded vs WNBA average · toggle volume" stale={stale.shotZones} source={src("teamShotZones")}>
