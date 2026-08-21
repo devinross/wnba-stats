@@ -17,6 +17,9 @@
 //   * JSON-LD describing what the page is (SportsTeam / Person / Dataset) plus
 //     a breadcrumb trail.
 //
+// The live season also gets /salaries, when scripts/build-salaries.mjs has
+// written a salaries.json for it — the one page that isn't about a team.
+//
 // The current season gets the full treatment (landing + team + player pages).
 // Completed seasons get their landing and team pages only: another ~250 player
 // pages per archived year would multiply the build for little crawl value, and
@@ -28,7 +31,7 @@
 // of it — new players get pages, departed ones stop being listed.
 // ---------------------------------------------------------------------------
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -81,6 +84,7 @@ if (!index.seasons?.length) {
 
 // Module-level state for the page builders: set once per season by renderSeason.
 let league = null;
+let salaries = null; // the salary file for the live season, when there is one
 let season = currentSeason;
 let updatedISO = new Date().toISOString();
 let updatedHuman = "";
@@ -282,6 +286,71 @@ function homeShell() {
       <p><a href="${PARENT_URL}">Highlight Factory</a> is the modern basketball film tool, powered with AI.</p>`;
 }
 
+const salariesPath = () => "/salaries";
+
+const usd = (value) =>
+  value == null ? "—" : `$${value.toLocaleString("en-US")}`;
+
+/**
+ * The salary page's shell: the top of the table as real rows, plus the highest
+ * scorer in each play type. Both are what the page is for, and both are lists
+ * of players a crawler can follow into their own pages.
+ */
+function salariesShell() {
+  const teamById = new Map(league.teams.map((t) => [t.id, t]));
+  const linkFor = (p) => {
+    const team = teamById.get(p.teamId);
+    if (!team || !p.slug) return esc(p.name);
+    return `<a href="${teamPathOf(team)}/${p.slug}">${esc(p.name)}</a>`;
+  };
+
+  const paid = salaries.players.filter((p) => p.salary);
+  const top = [...paid].sort((a, b) => b.salary - a.salary).slice(0, 25);
+  const rows = top
+    .map((p) => {
+      const team = teamById.get(p.teamId);
+      return `<tr><td>${linkFor(p)}</td><td>${esc(p.pos || "—")}</td>` +
+        `<td>${team ? `<a href="${teamPathOf(team)}">${esc(team.name)}</a>` : "—"}</td>` +
+        `<td>${usd(p.salary)}</td><td>${p.ppg}</td><td>${p.rpg}</td><td>${p.apg}</td></tr>`;
+    })
+    .join("");
+
+  const bargains = paid
+    .filter((p) => p.value != null)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+    .map((p) => `<li>${linkFor(p)} — ${usd(p.salary)}, ${p.ppg} points, ${p.rpg} rebounds and ${p.apg} assists per game</li>`)
+    .join("");
+
+  const byType = (salaries.playTypes || [])
+    .map((type) => {
+      const best = salaries.players
+        .filter((p) => p.scores)
+        .sort((a, b) => b.scores[type.key] - a.scores[type.key])
+        .slice(0, 5);
+      if (!best.length) return "";
+      const items = best
+        .map((p) => `<li>${linkFor(p)} — ${p.scores[type.key]} out of 100${p.salary ? `, ${usd(p.salary)}` : ""}</li>`)
+        .join("");
+      return `<h3>${esc(type.label)}</h3><p>${esc(type.blurb)}</p><ul>${items}</ul>`;
+    })
+    .join("");
+
+  return `<h1>${season} WNBA Player Salaries</h1>
+      <p>What every WNBA player is paid in ${season}, next to what she has produced — points, rebounds and assists per game, a play-type score for the kind of player she is, and a value ranking of production per dollar. ${salaries.meta.withSalary} of ${salaries.meta.players} rostered players have a listed salary. Updated ${esc(updatedHuman)}.</p>
+      <h2>Highest-paid players, ${season}</h2>
+      <table><thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>${season} salary</th><th>PPG</th><th>REB</th><th>AST</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      ${bargains ? `<h2>Best value contracts</h2><p>Most season production per dollar.</p><ul>${bargains}</ul>` : ""}
+      <h2>Play types</h2>
+      <p>Each score is a 0-100 rank among the ${salaries.meta.qualified} players with at least ${salaries.meta.minGames} games and ${salaries.meta.minMinutes} minutes, blending how much a player does something with how well it goes.</p>
+      ${byType}
+      <h2>On this page</h2>
+      <p>The full table is filterable by position, team, play type, salary band and contract designation, and sortable on every column, with a salary-against-production chart for the players on screen.</p>
+      <p>Salaries from the ${esc(salaries.meta.source.name)}; stats from stats.wnba.com.</p>
+      <p><a href="${homePath()}">All WNBA teams, ${season}</a></p>`;
+}
+
 function teamShell(team) {
   const s = teamSummary(team);
   const b = league.data[team.id] || {};
@@ -375,7 +444,39 @@ function breadcrumbs(trail) {
   };
 }
 
-function jsonLdFor({ team, player, path }) {
+function jsonLdFor({ team, player, path, view }) {
+  if (view === "salaries") {
+    return {
+      "@context": "https://schema.org",
+      "@graph": [
+        organization,
+        {
+          "@type": "Dataset",
+          "@id": SITE_URL + path + "#dataset",
+          name: `${season} WNBA player salaries and production`,
+          description:
+            `Every ${season} WNBA player's salary alongside her per-game production, play-type scores ` +
+            "and a production-per-dollar value ranking.",
+          url: SITE_URL + path,
+          isAccessibleForFree: true,
+          dateModified: updatedISO,
+          temporalCoverage: String(season),
+          creator: { "@id": `${PARENT_URL}/#organization` },
+          keywords: ["WNBA salaries", "WNBA contracts", "player value", "basketball analytics"],
+          distribution: {
+            "@type": "DataDownload",
+            encodingFormat: "application/json",
+            contentUrl: `${SITE_URL}/data/${season}/salaries.json`,
+          },
+        },
+        breadcrumbs([
+          { name: `${season} WNBA Stats`, path: homePath() },
+          { name: "Player salaries", path },
+        ]),
+      ],
+    };
+  }
+
   if (player && team) {
     return {
       "@context": "https://schema.org",
@@ -471,8 +572,8 @@ function replaceOnce(html, pattern, replacement, label) {
   return html.replace(pattern, () => replacement);
 }
 
-function buildPage({ team, player, path, tab }) {
-  const meta = pageMeta({ team, tab, player, season, path, archive: isArchive });
+function buildPage({ team, player, path, tab, view }) {
+  const meta = pageMeta({ team, tab, player, season, path, archive: isArchive, view });
   let html = template;
 
   html = replaceOnce(html, /<title>[\s\S]*?<\/title>/, `<title>${esc(meta.title)}</title>`, "<title>");
@@ -513,7 +614,7 @@ function buildPage({ team, player, path, tab }) {
     "og:image"
   );
 
-  const shell = player ? playerShell(team, player) : team ? teamShell(team) : homeShell();
+  const shell = view === "salaries" ? salariesShell() : player ? playerShell(team, player) : team ? teamShell(team) : homeShell();
   html = replaceOnce(
     html,
     /<div id="root"><\/div>/,
@@ -523,7 +624,7 @@ function buildPage({ team, player, path, tab }) {
 
   html = html.replace(
     "</head>",
-    `  <script type="application/ld+json">${JSON.stringify(jsonLdFor({ team, player, path }))}</script>\n  </head>`
+    `  <script type="application/ld+json">${JSON.stringify(jsonLdFor({ team, player, path, view }))}</script>\n  </head>`
   );
 
   return html;
@@ -545,6 +646,10 @@ const routes = [];
 
 function renderSeason(year) {
   league = readSeason(year);
+  // Contracts are only maintained for the season being played (see
+  // scripts/build-salaries.mjs), so an archived year simply has no salary page.
+  const salaryPath = resolve(dataDir, String(year), "salaries.json");
+  salaries = Number(year) === Number(currentSeason) && existsSync(salaryPath) ? readJson(salaryPath) : null;
   season = league.meta?.season ?? year;
   updatedISO = league.meta?.generatedAt || new Date().toISOString();
   updatedHuman = humanDate(updatedISO);
@@ -561,6 +666,11 @@ function renderSeason(year) {
   writePage(homePath(), buildPage({ path: homePath() }));
   count++;
 
+  if (salaries) {
+    writePage(salariesPath(), buildPage({ path: salariesPath(), view: "salaries" }));
+    count++;
+  }
+
   for (const team of league.teams) {
     const tPath = teamPathOf(team);
     writePage(tPath, buildPage({ team, path: tPath, tab: "team" }));
@@ -576,7 +686,7 @@ function renderSeason(year) {
     });
   }
 
-  routes.push(...seasonRoutes(league, currentSeason, { players: withPlayers }));
+  routes.push(...seasonRoutes(league, currentSeason, { players: withPlayers, salaries: !!salaries }));
   return { year: season, teams: league.teams.length, archive: isArchive };
 }
 
@@ -596,6 +706,7 @@ const priorityFor = (route) => {
   const archive = /^\/\d{4}(\/|$)/.test(route);
   const depth = route.split("/").filter(Boolean).length;
   if (route === "/") return "1.0";
+  if (route === "/salaries") return "0.9";
   if (archive) return depth <= 1 ? "0.6" : "0.4";
   return depth === 2 ? "0.8" : "0.6";
 };

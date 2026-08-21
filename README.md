@@ -354,6 +354,130 @@ hosts are blocked, which is exactly why we fetch from your Mac by default.)
 
 ---
 
+## Salaries
+
+`/salaries` lists every player in the league with her contract next to what she
+has produced, and a score for each role she might fill. stats.wnba.com publishes **no** contract data, so the salaries are
+the one number on this site that isn't fetched — they come from a CSV you keep
+by hand:
+
+```
+data/salaries/2026.csv     PLAYER, SALARY, SIGNING, TEAM
+```
+
+Copied from the [Her Hoop Stats salary cap
+sheet](https://herhoopstats.com/salary-cap-sheet/wnba/players/highest_salary/).
+Salaries in `$1,234,567` form; blanks allowed anywhere. Only `PLAYER` and a
+column matching `/SALARY/` are required — `SIGNING` (the CBA designation behind
+the Contract filter) and `TEAM` are both optional, and the build reads whichever
+of them the file has. `TEAM` is never shown on the page: it exists so a row that
+fails to match a roster can say which team it claimed to be on, which is most of
+the work of tracking down a spelling difference.
+
+A player listed more than once — a hardship deal and then a rest-of-season
+contract, or a mid-season trade — has her rows summed, and the table marks the
+figure `×2`. The designation is taken from whichever of her rows carries one.
+
+Everything else on the page — per-game production, shooting, usage, the
+play-type scores and the value ranking — is computed from the season's own game
+logs by `scripts/build-salaries.mjs`, which writes
+`public/data/<season>/salaries.json`. That runs automatically after every
+`npm run fetch` (npm's `postfetch` hook), so the nightly refresh keeps the stats
+half current; only the CSV needs a human, and only when contracts change.
+
+To rebuild it on its own:
+
+```bash
+npm run salaries
+```
+
+It prints how many players matched, and names any row in the sheet that isn't on
+a roster in the season data — waived players, or a name spelled differently by
+the two sources:
+
+```
+salaries: 227 players (212 with a 2026 salary, 166 qualified for scores)
+  — 4 sheet rows not on a roster: Iliana Rupert (GSV), Shey Peddy (CON), ...
+```
+
+Players on a roster with no salary are the tail of the league — hardship and
+replacement signings who never reach a cap sheet. They all fall short of the
+scoring minimums too, so they only surface under "Everyone on a roster".
+
+The Value table carries **two** value numbers, because "was this contract worth
+it?" and "is this player worth it?" are different questions and a season with
+games missed splits them. **Value** divides season production by salary, so games
+missed count against the deal; **Value/G** divides per-game production by salary
+instead. Napheesa Collier — ten games at $1.4M — reads 8 on the first and 48 on
+the second, and neither is wrong. Sorting by the gap between them finds the
+players whose durability *is* the value, and the ones an injury has hidden.
+
+The play-type table has a **Score / Per $** switch. *Per $* re-ranks the same
+seven columns by score divided by salary, so sorting the Driving column finds the
+cheapest real driver in the league rather than the best one. Only players
+*above average* in a role are ranked in it (score `ROLE_VALUE_FLOOR`, currently
+55) — any ratio with money underneath it is otherwise won by whoever is cheapest,
+and "best value rebounder" comes back as a minimum-salary player who scores 40.
+The cell tooltip carries the raw ratio. One caveat the page also states: salary
+is the season's cap figure, so a partial-season deal flatters this metric.
+
+The **Best fit** column names every role within 2 points of a player's top score,
+not just the highest one — about one qualified player in seven has two that
+close, and picking between a 96 and a 96 by which archetype is declared first in
+the build script is a coin flip dressed up as a finding. Kelsey Plum reads
+"Driving · Scoring" because she is both.
+
+**The play-type scores.** Each is 0-100, and each is a *rank* among players with
+at least 5 games and 150 minutes — a 90 means top 10% of rotation players at that
+thing. They blend how much a player does something with how well it goes, so a
+low score can mean either she doesn't do it or it doesn't work. They describe a
+role, not a grade.
+
+| Score | Built from |
+| --- | --- |
+| Spot-up shooter | catch-and-shoot threes per 36, three-point accuracy, share of her shots |
+| Playmaker | assists per 36, assist percentage, assist-to-turnover ratio |
+| Post scorer | post-ups per 36, the wider interior diet, paint finishing, free-throw rate |
+| Driving | drives and floaters per 36, finishing on drives, free-throw rate |
+| Scoring | points per 36, usage rate, true shooting |
+| Rebounding | rebounds per 36, rebound percentage, offensive rebounds per 36 |
+| Defense | on/off defensive rating, matchup FG% vs normal, steals and blocks per 36, rim FG% vs normal, fouls per 36 |
+| Value | season production per $1M — production is Game Score summed over the season |
+| Value/G | the same per game played, so injury and rest are priced out |
+
+Shooting percentages are shrunk toward the league average by a prior (50 attempts
+for threes, 40 in the paint), so nobody tops a shooting score on a 3-for-4 week.
+The weights and the qualifying thresholds are all at the top of
+`scripts/build-salaries.mjs`.
+
+**The defensive score** is the one built from data no other page on this site
+uses, so it's worth spelling out. Two independent readings go into it:
+
+* **On/off** (`onOff` in the team files) — the team's defensive rating with her
+  on the floor against with her off it. It is the only measure of *impact* there
+  is, but over 30-odd games it is mostly a description of the four teammates
+  around her.
+* **Defensive matchups** (`shotDefend`, from `leaguedashptdefend`) — every shot
+  she was the closest defender on, what those shooters hit against her, and what
+  those same shooters hit the rest of the season. That difference is her own
+  work, but on a few hundred contested shots.
+
+Both are noisy, so both are **damped in proportion to their own sample** before
+being ranked: multiplied by `n / (n + prior)`, with priors of 400 on-court
+minutes, 150 shots defended and 60 rim shots defended (`SHRINK_ON`,
+`SHRINK_DEF`, `SHRINK_RIM`). A player with a thin sample lands near zero — league
+average — rather than at either extreme. Steals, blocks and fouls per 36 fill out
+the rest. The **Defense** column mode on the page shows all of these raw, so any
+rank can be argued with.
+
+The result reads about how you would expect: A'ja Wilson, Aliyah Boston and the
+rim-protecting centers at the top, hunted small guards at the bottom.
+
+Because the sheet only exists for the season being played, `/salaries` has no
+year-prefixed copies — `/2025/salaries` falls back to the 2025 landing page.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -435,7 +559,12 @@ isolation, no post-up frequency. `synergyplaytypes` answers HTTP 500, and the
 whole tracking family (`leaguedashptstats`, `playerdashptpass`,
 `leaguehustlestatsplayer` and its screen assists) answers 200 with zero rows.
 No feed records screens at all. So a pass is described here by the shot at the
-end of it, never by the action that created it.
+end of it, never by the action that created it. The play-type scores on
+`/salaries` are built from shot-type buckets for exactly this reason — see
+**Salaries** above.
+
+There are also **no contracts**: nothing in any feed carries a salary. Those come
+from a CSV kept by hand, also covered under **Salaries**.
 
 ## Checking the numbers against wnba.com
 
@@ -496,12 +625,15 @@ scripts/
                         (CURRENT_SEASON, OLDEST_SEASON and the TEAM_EMOJI map live at
                          the top; anything that fails is carried over from what's on disk)
   prerender.mjs         after `vite build`: one HTML page per team/player, every season, + sitemap.xml
+  build-salaries.mjs    joins data/salaries/<season>.csv to the season's stats -> public/data/<season>/salaries.json
+                        (runs automatically after `npm run fetch`; also `npm run salaries`)
   build-og.mjs          renders og-template.html -> public/og.png (run by hand: `npm run og`)
   og-template.html      the artwork for the social share card
 public/
   data/index.json       which seasons exist, when each was fetched, what's missing
   data/<season>/league.json      that season's team list + league-wide charts
   data/<season>/teams/<id>.json  one file per team (its games, roster, on/off, lineups)
+  data/<season>/salaries.json    the salary page: every player's contract, production and play-type scores
   data/<season>/rotations/<g>.json  one file per game's substitutions (backfilled nightly)
   data/<season>/assists/<g>.json    one file per game's made field goals + who assisted them
 src/
@@ -517,12 +649,15 @@ src/
   BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
   useLeagueData.js      React hooks for the three loads: season index, season, team
   Dashboard.jsx         per-player view (Players tab)
+  SalaryView.jsx        the /salaries page: filterable salary + production + play-type table
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
   PlaymakingChart.jsx   assists vs turnovers per player, with assist-to-turnover ratio
   AssistCharts.jsx      assist network matrix, what each pass creates, assisted share
   StaleNote.jsx         the "showing the numbers from ..." note on carried-over sections
   index.css             brand tokens, typography, shared .hf-* classes
+data/
+  salaries/<season>.csv the hand-maintained salary sheet (see "Salaries" below)
 server/
   wnba.php              NOT USED anymore - the old live proxy; safe to delete
 ```

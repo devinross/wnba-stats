@@ -5,10 +5,11 @@ import { parsePath, resolveInSeason, buildPath, teamSlug } from "./routes.js";
 import { pageMeta, applyHead } from "./pageMeta.js";
 import BrandMark from "./BrandMark.jsx";
 import TeamBadge from "./TeamBadge.jsx";
-import { useSeasonIndex, useSeason, useTeam } from "./useLeagueData";
+import { useSeasonIndex, useSeason, useTeam, useSalaries } from "./useLeagueData";
 import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
 import LeagueView, { todayET } from "./LeagueView.jsx";
+import SalaryView from "./SalaryView.jsx";
 import StaleNote from "./StaleNote.jsx";
 
 function Center({ children }) {
@@ -407,6 +408,56 @@ function LeagueBar({ season, seasons, currentSeason, onPickSeason, seasonLoading
   );
 }
 
+// The salary page's own context strip. It isn't about a team, and it isn't
+// about a season you can switch — contracts exist for the year being played and
+// nowhere else — so it names the page, links back to the league, and counts
+// what's in the file rather than carrying a season picker.
+function SalaryBar({ season, updated, leagueHref, onLeague, meta }) {
+  const tile = (label, value) => (
+    <div style={{ textAlign: "right" }}>
+      <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 22 }}>{value}</div>
+    </div>
+  );
+  return (
+    <div
+      className="hf-container"
+      style={{ paddingTop: 22, paddingBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}
+    >
+      <div>
+        <a
+          className="hf-eyebrow"
+          href={leagueHref}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            onLeague();
+          }}
+          style={{ fontSize: 10, marginBottom: 2, display: "inline-block" }}
+        >
+          ‹ {season} WNBA Analytics
+        </a>
+        <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.1, margin: 0 }}>
+          {season} Player Salaries
+          <span className="sr-only">
+            {" — "}every WNBA contract next to that player's production, play-type scores and value ranking
+          </span>
+        </h1>
+        <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
+          What they're paid, what they produce{updated ? ` · updated ${updated}` : ""}
+        </div>
+      </div>
+      {meta && (
+        <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+          {tile("Players", meta.players)}
+          {tile("Salaries", meta.withSalary)}
+          {tile("Scored", meta.qualified)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FooterCol({ title, links }) {
   return (
     <div>
@@ -488,6 +539,7 @@ function SiteFooter({ updated }) {
           <FooterCol
             title="This site"
             links={[
+              ["Player salaries", "/salaries"],
               ["Get the app", SITE.appStoreUrl],
               ["Contact", `mailto:${SITE.contactEmail}`],
             ]}
@@ -513,7 +565,10 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // No team in the URL means the league page — the season as a whole — rather
   // than some arbitrary first team standing in for it.
   const team = resolved.teamId ? teams.find((t) => t.id === resolved.teamId) || null : null;
-  const isLeague = !team;
+  // /salaries is teamless too, so it has to be asked about before "no team
+  // means the league page" is applied.
+  const isSalaries = route.view === "salaries";
+  const isLeague = !team && !isSalaries;
   const tab = resolved.tab;
   const sel = resolved.sel;
 
@@ -528,6 +583,9 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // Null on the league page: everything it draws is in league.json, so it never
   // downloads a team file.
   const teamState = useTeam(season, team ? team.id : null, { current: isCurrent });
+  // ~170KB, and only this page reads it — so it is fetched on /salaries and
+  // nowhere else.
+  const salaryState = useSalaries(season, { current: isCurrent, enabled: isSalaries });
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
@@ -557,12 +615,13 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
 
   const pickTeam = (id) => {
     const t = teams.find((x) => x.id === id);
-    if (t) go({ teamSlug: teamSlug(t), playerSlug: null });
+    if (t) go({ teamSlug: teamSlug(t), playerSlug: null, view: null });
   };
+  const goSalaries = () => setRoute({ season: currentSeason, teamSlug: null, playerSlug: null, view: "salaries" });
   const pickSeason = (nextSeason) => {
     // Stay on the same team when it existed that year; otherwise that season's
     // league page.
-    setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null });
+    setRoute({ season: Number(nextSeason), teamSlug: route.teamSlug, playerSlug: null, view: null });
   };
   const setTab = (nextTab) => {
     if (nextTab === "team") return go({ playerSlug: null });
@@ -579,6 +638,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     team,
     season, currentSeason, tab,
     player: (playerSlugs[sel] || {}).slug,
+    view: route.view,
   });
 
   // --- links out of the league page ---------------------------------------
@@ -597,7 +657,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   };
   const pickPlayer = (teamId, name) => {
     const hit = findPlayer(teamId, name);
-    if (hit) go({ teamSlug: teamSlug(hit.team), playerSlug: hit.player.slug });
+    if (hit) go({ teamSlug: teamSlug(hit.team), playerSlug: hit.player.slug, view: null });
   };
 
   // Real hrefs for the roster, so player pages are reachable by a crawler (and
@@ -633,6 +693,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       team,
       tab, player, season, path,
       archive: !isCurrent,
+      view: route.view,
     }));
     // `player` is in the deps because the roster arrives after the URL does:
     // on a deep link into a player page the first pass has no roster yet and
@@ -643,7 +704,15 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
       <SiteHeader />
 
-      {isLeague ? (
+      {isSalaries ? (
+        <SalaryBar
+          season={season}
+          updated={updated}
+          meta={salaryState.data ? salaryState.data.meta : null}
+          leagueHref={buildPath({ team: null, season, currentSeason })}
+          onLeague={() => go({ teamSlug: null, playerSlug: null, view: null })}
+        />
+      ) : isLeague ? (
         <LeagueBar
           season={route.season}
           seasons={index.seasons}
@@ -675,7 +744,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         />
       )}
 
-      {!isLeague && (
+      {!isLeague && !isSalaries && (
         <nav
           className="hf-container"
           style={{
@@ -695,7 +764,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </nav>
       )}
 
-      {!isLeague && staleGames && (
+      {!isLeague && !isSalaries && staleGames && (
         <div className="hf-container" style={{ paddingTop: 16 }}>
           <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 12, padding: "10px 14px" }}>
             <StaleNote stale={staleGames} style={{ margin: 0 }} />
@@ -703,7 +772,25 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </div>
       )}
 
-      {isLeague ? (
+      {isSalaries ? (
+        salaryState.error ? (
+          <LoadFailure error={salaryState.error} what={`${season} salaries`} />
+        ) : !salaryState.data ? (
+          <div className="hf-container" style={{ padding: "60px 24px", textAlign: "center", color: C.MUTE }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 16, color: C.BRAND }}>
+              Loading {season} salaries…
+            </div>
+          </div>
+        ) : (
+          <SalaryView
+            data={salaryState.data}
+            teams={teams}
+            season={season}
+            playerHref={hrefForPlayer}
+            onPickPlayer={pickPlayer}
+          />
+        )
+      ) : isLeague ? (
         <LeagueView
           key={`league:${season}`}
           teams={teams}
@@ -719,6 +806,8 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           playerHref={hrefForPlayer}
           onPickTeam={pickTeam}
           onPickPlayer={pickPlayer}
+          salaryHref={buildPath({ view: "salaries" })}
+          onSalaries={goSalaries}
         />
       ) : teamState.error ? (
         <LoadFailure error={teamState.error} what={`${team.name}'s ${season} data`} />
@@ -769,7 +858,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       )}
 
       {/* The league page already lists every team, as cards. */}
-      {!isLeague && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
+      {!isLeague && !isSalaries && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
 
       <SiteFooter updated={updated} />
     </div>

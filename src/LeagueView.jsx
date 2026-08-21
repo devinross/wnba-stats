@@ -532,6 +532,50 @@ function LandscapeTooltip({ active, payload }) {
 
 // ----- the page -------------------------------------------------------------
 
+// The way in to the salary page. It's the only page on the site that isn't a
+// team or a season, so nothing else on the league page would lead there — and a
+// crawler needs a real <a> to follow, not a nav item the app draws.
+function SalaryCta({ href, onGo, season }) {
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        onGo();
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+        background: C.PANEL_2,
+        border: `1px solid ${C.LINE}`,
+        borderRadius: 16,
+        padding: "16px 20px",
+        color: C.TXT,
+      }}
+    >
+      <span>
+        <span className="hf-eyebrow" style={{ fontSize: 10, display: "block", marginBottom: 3 }}>
+          New
+        </span>
+        <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "block" }}>
+          {season} salaries vs production
+        </span>
+        <span style={{ fontSize: 13, color: C.MUTE }}>
+          Every contract next to what that player produces, scored by role — spot-up shooting, playmaking, post
+          scoring, driving, scoring, rebounding and defense.
+        </span>
+      </span>
+      <span className="hf-btn hf-btn--primary" style={{ padding: "9px 18px", fontSize: 13, whiteSpace: "nowrap" }}>
+        Open the table
+      </span>
+    </a>
+  );
+}
+
 export default function LeagueView({
   teams = [],
   standings = [],
@@ -543,6 +587,8 @@ export default function LeagueView({
   playerHref,
   onPickTeam,
   onPickPlayer,
+  salaryHref,
+  onSalaries,
   stale = {},
   season,
   final = false,
@@ -739,6 +785,8 @@ export default function LeagueView({
           })}
         </div>
       </Section>
+
+      {salaryHref && !final && <SalaryCta href={salaryHref} onGo={onSalaries} season={season} />}
     </main>
   );
 }

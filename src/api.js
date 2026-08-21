@@ -11,6 +11,8 @@
 //   data/<season>/teams/<id>.json  { games, roster, onOff, fourFactors,
 //                                    playerAdv, lineups, shotZones, upcoming,
 //                                    errors, stale }
+//   data/<season>/salaries.json  { meta, playTypes, teams, players }
+//                                (scripts/build-salaries.mjs, current season only)
 //
 // One file per season held every team, which meant downloading ~900KB to look
 // at one of them. Now a cold load is the index plus one season's league file
@@ -68,6 +70,15 @@ export function loadSeason(season, { current = false } = {}) {
 /** One team's bundle within a season (its games, roster, on/off, lineups, ...). */
 export function loadTeam(season, teamId, { current = false } = {}) {
   return loadJson(`${DATA_ROOT}/${season}/teams/${teamId}.json`, { fresh: current });
+}
+
+/**
+ * The salary page's one file: every player's contract joined to her season
+ * production and play-type scores. Only the season being played has one, and
+ * only that page asks for it, so it is never part of a cold load elsewhere.
+ */
+export function loadSalaries(season, { current = false } = {}) {
+  return loadJson(`${DATA_ROOT}/${season}/salaries.json`, { fresh: current });
 }
 
 /**

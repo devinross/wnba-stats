@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadIndex, loadSeason, loadTeam, prefetchTeam } from "./api";
+import { loadIndex, loadSeason, loadTeam, loadSalaries, prefetchTeam } from "./api";
 
 // The data now arrives in three stages instead of one big file — the season
 // index, then a season, then a team — so each has its own hook and its own
@@ -54,6 +54,21 @@ export function useSeason(season, { current, prefetchTeamId } = {}) {
       }),
     [season, current],
     season != null
+  );
+}
+
+/**
+ * The salary table's file. Fetched only on /salaries — it's the biggest single
+ * file the site serves, and no other page reads it.
+ */
+export function useSalaries(season, { current, enabled = true } = {}) {
+  // `enabled` is in the dependency list, not just the guard: it flips when you
+  // navigate onto /salaries from another page, and without it here the effect
+  // would never re-run and the fetch would never start.
+  return useAsync(
+    () => loadSalaries(season, { current }),
+    [season, current, enabled],
+    enabled && season != null
   );
 }
 

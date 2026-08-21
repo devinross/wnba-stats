@@ -22,16 +22,27 @@ export function positionLabel(pos) {
 
 /**
  * Metadata for one route.
- *   { team, tab, player, season, path, archive }
+ *   { team, tab, player, season, path, archive, view }
  * `player` is the roster entry (for the player pages), `path` the canonical
  * pathname from routes.js, and `archive` marks a season that has finished — its
  * landing page is about that year rather than about the league today. Titles
  * are kept near 60 characters and descriptions near 155 so neither gets
  * truncated in results.
  */
-export function pageMeta({ team, tab, player, season, path = "/", archive = false }) {
+export function pageMeta({ team, tab, player, season, path = "/", archive = false, view = null }) {
   const yr = season ? `${season} ` : "";
   const canonical = SITE_URL + (path === "/" ? "/" : path);
+
+  if (view === "salaries") {
+    return {
+      canonical,
+      title: `${season} WNBA Player Salaries & Production`,
+      description:
+        `Every ${season} WNBA salary next to what the player produced: per-game stats, play-type and ` +
+        `defensive scores, and a value ranking. Filter by position, team and role.`,
+      ogTitle: `${season} WNBA salaries vs production`,
+    };
+  }
 
   if (player && tab === "players" && team) {
     const role = positionLabel(player.pos);
