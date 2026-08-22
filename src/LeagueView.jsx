@@ -532,10 +532,10 @@ function LandscapeTooltip({ active, payload }) {
 
 // ----- the page -------------------------------------------------------------
 
-// The way in to the salary page. It's the only page on the site that isn't a
-// team or a season, so nothing else on the league page would lead there — and a
-// crawler needs a real <a> to follow, not a nav item the app draws.
-function SalaryCta({ href, onGo, season }) {
+// The ways in to the two contract pages. They're the only pages on the site that
+// aren't a team or a season, so nothing else on the league page would lead
+// there — and a crawler needs real <a>s to follow, not nav items the app draws.
+function ToolCard({ href, onGo, eyebrow, title, children, cta }) {
   return (
     <a
       href={href}
@@ -546,10 +546,8 @@ function SalaryCta({ href, onGo, season }) {
       }}
       style={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 16,
-        flexWrap: "wrap",
+        flexDirection: "column",
+        gap: 10,
         background: C.PANEL_2,
         border: `1px solid ${C.LINE}`,
         borderRadius: 16,
@@ -559,18 +557,16 @@ function SalaryCta({ href, onGo, season }) {
     >
       <span>
         <span className="hf-eyebrow" style={{ fontSize: 10, display: "block", marginBottom: 3 }}>
-          New
+          {eyebrow}
         </span>
-        <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "block" }}>
-          {season} salaries vs production
-        </span>
-        <span style={{ fontSize: 13, color: C.MUTE }}>
-          Every contract next to what that player produces, scored by role — spot-up shooting, playmaking, post
-          scoring, driving, scoring, rebounding and defense.
-        </span>
+        <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "block" }}>{title}</span>
+        <span style={{ fontSize: 13, color: C.MUTE, lineHeight: 1.5 }}>{children}</span>
       </span>
-      <span className="hf-btn hf-btn--primary" style={{ padding: "9px 18px", fontSize: 13, whiteSpace: "nowrap" }}>
-        Open the table
+      <span
+        className="hf-btn hf-btn--primary"
+        style={{ padding: "9px 18px", fontSize: 13, whiteSpace: "nowrap", alignSelf: "flex-start", marginTop: "auto" }}
+      >
+        {cta}
       </span>
     </a>
   );
@@ -588,7 +584,8 @@ export default function LeagueView({
   onPickTeam,
   onPickPlayer,
   salaryHref,
-  onSalaries,
+  gmHref,
+  onTool,
   stale = {},
   season,
   final = false,
@@ -786,7 +783,30 @@ export default function LeagueView({
         </div>
       </Section>
 
-      {salaryHref && !final && <SalaryCta href={salaryHref} onGo={onSalaries} season={season} />}
+      {salaryHref && !final && (
+        <div className="split-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <ToolCard
+            href={salaryHref}
+            onGo={() => onTool("salaries")}
+            eyebrow="Tool"
+            title={`${season} salaries vs production`}
+            cta="Open the table"
+          >
+            Every contract next to what that player produces, scored by role — spot-up shooting, playmaking, post
+            scoring, driving, scoring, rebounding and defense.
+          </ToolCard>
+          <ToolCard
+            href={gmHref}
+            onGo={() => onTool("gm")}
+            eyebrow="New"
+            title="Virtual GM"
+            cta="Build a roster"
+          >
+            Sign and cut real players against a real payroll. Watch the cap, then see what your roster can and can't
+            do next to a typical team.
+          </ToolCard>
+        </div>
+      )}
     </main>
   );
 }

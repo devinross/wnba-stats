@@ -10,6 +10,7 @@ import Dashboard from "./Dashboard.jsx";
 import TeamView from "./TeamView.jsx";
 import LeagueView, { todayET } from "./LeagueView.jsx";
 import SalaryView from "./SalaryView.jsx";
+import GMView from "./GMView.jsx";
 import StaleNote from "./StaleNote.jsx";
 
 function Center({ children }) {
@@ -412,7 +413,7 @@ function LeagueBar({ season, seasons, currentSeason, onPickSeason, seasonLoading
 // about a season you can switch — contracts exist for the year being played and
 // nowhere else — so it names the page, links back to the league, and counts
 // what's in the file rather than carrying a season picker.
-function SalaryBar({ season, updated, leagueHref, onLeague, meta }) {
+function SalaryBar({ season, gm = false, updated, leagueHref, onLeague, meta }) {
   const tile = (label, value) => (
     <div style={{ textAlign: "right" }}>
       <div style={{ fontSize: 11, color: C.MUTE, letterSpacing: 1.5, textTransform: "uppercase", fontWeight: 600 }}>{label}</div>
@@ -438,16 +439,20 @@ function SalaryBar({ season, updated, leagueHref, onLeague, meta }) {
           ‹ {season} WNBA Analytics
         </a>
         <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.1, margin: 0 }}>
-          {season} Player Salaries
+          {gm ? "Virtual GM" : `${season} Player Salaries`}
           <span className="sr-only">
-            {" — "}every WNBA contract next to that player's production, play-type scores and value ranking
+            {" — "}
+            {gm
+              ? `build a ${season} WNBA roster against the salary cap`
+              : "every WNBA contract next to that player's production, play-type scores and value ranking"}
           </span>
         </h1>
         <div style={{ fontSize: 12, color: C.MUTE, marginTop: 2 }}>
-          What they're paid, what they produce{updated ? ` · updated ${updated}` : ""}
+          {gm ? `Build a ${season} roster under the cap` : "What they're paid, what they produce"}
+          {updated ? ` · updated ${updated}` : ""}
         </div>
       </div>
-      {meta && (
+      {meta && !gm && (
         <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
           {tile("Players", meta.players)}
           {tile("Salaries", meta.withSalary)}
@@ -540,6 +545,7 @@ function SiteFooter({ updated }) {
             title="This site"
             links={[
               ["Player salaries", "/salaries"],
+              ["Virtual GM", "/gm"],
               ["Get the app", SITE.appStoreUrl],
               ["Contact", `mailto:${SITE.contactEmail}`],
             ]}
@@ -568,7 +574,10 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // /salaries is teamless too, so it has to be asked about before "no team
   // means the league page" is applied.
   const isSalaries = route.view === "salaries";
-  const isLeague = !team && !isSalaries;
+  const isGM = route.view === "gm";
+  // Both contract pages read salaries.json, so they share a fetch and a header.
+  const isContracts = isSalaries || isGM;
+  const isLeague = !team && !isContracts;
   const tab = resolved.tab;
   const sel = resolved.sel;
 
@@ -585,7 +594,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const teamState = useTeam(season, team ? team.id : null, { current: isCurrent });
   // ~170KB, and only this page reads it — so it is fetched on /salaries and
   // nowhere else.
-  const salaryState = useSalaries(season, { current: isCurrent, enabled: isSalaries });
+  const salaryState = useSalaries(season, { current: isCurrent, enabled: isContracts });
   const bundle = teamState.data || {};
   const {
     games = [], roster = [], onOff = [], fourFactors = null, playerAdv = [],
@@ -617,7 +626,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     const t = teams.find((x) => x.id === id);
     if (t) go({ teamSlug: teamSlug(t), playerSlug: null, view: null });
   };
-  const goSalaries = () => setRoute({ season: currentSeason, teamSlug: null, playerSlug: null, view: "salaries" });
+  const goView = (view) => setRoute({ season: currentSeason, teamSlug: null, playerSlug: null, view });
   const pickSeason = (nextSeason) => {
     // Stay on the same team when it existed that year; otherwise that season's
     // league page.
@@ -704,9 +713,10 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
     <div style={{ minHeight: "100vh", background: C.INK, color: C.TXT }}>
       <SiteHeader />
 
-      {isSalaries ? (
+      {isContracts ? (
         <SalaryBar
           season={season}
+          gm={isGM}
           updated={updated}
           meta={salaryState.data ? salaryState.data.meta : null}
           leagueHref={buildPath({ team: null, season, currentSeason })}
@@ -744,7 +754,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         />
       )}
 
-      {!isLeague && !isSalaries && (
+      {!isLeague && !isContracts && (
         <nav
           className="hf-container"
           style={{
@@ -764,7 +774,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </nav>
       )}
 
-      {!isLeague && !isSalaries && staleGames && (
+      {!isLeague && !isContracts && staleGames && (
         <div className="hf-container" style={{ paddingTop: 16 }}>
           <div style={{ background: C.PANEL_2, border: `1px solid ${C.LINE}`, borderRadius: 12, padding: "10px 14px" }}>
             <StaleNote stale={staleGames} style={{ margin: 0 }} />
@@ -772,7 +782,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
         </div>
       )}
 
-      {isSalaries ? (
+      {isContracts ? (
         salaryState.error ? (
           <LoadFailure error={salaryState.error} what={`${season} salaries`} />
         ) : !salaryState.data ? (
@@ -781,6 +791,14 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
               Loading {season} salaries…
             </div>
           </div>
+        ) : isGM ? (
+          <GMView
+            data={salaryState.data}
+            teams={teams}
+            season={season}
+            playerHref={hrefForPlayer}
+            onPickPlayer={pickPlayer}
+          />
         ) : (
           <SalaryView
             data={salaryState.data}
@@ -807,7 +825,8 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           onPickTeam={pickTeam}
           onPickPlayer={pickPlayer}
           salaryHref={buildPath({ view: "salaries" })}
-          onSalaries={goSalaries}
+          gmHref={buildPath({ view: "gm" })}
+          onTool={goView}
         />
       ) : teamState.error ? (
         <LoadFailure error={teamState.error} what={`${team.name}'s ${season} data`} />
@@ -858,7 +877,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
       )}
 
       {/* The league page already lists every team, as cards. */}
-      {!isLeague && !isSalaries && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
+      {!isLeague && !isContracts && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}
 
       <SiteFooter updated={updated} />
     </div>

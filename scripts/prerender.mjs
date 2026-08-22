@@ -17,8 +17,8 @@
 //   * JSON-LD describing what the page is (SportsTeam / Person / Dataset) plus
 //     a breadcrumb trail.
 //
-// The live season also gets /salaries, when scripts/build-salaries.mjs has
-// written a salaries.json for it — the one page that isn't about a team.
+// The live season also gets /salaries and /gm, when scripts/build-salaries.mjs
+// has written a salaries.json for it — the two pages that aren't about a team.
 //
 // The current season gets the full treatment (landing + team + player pages).
 // Completed seasons get their landing and team pages only: another ~250 player
@@ -287,6 +287,7 @@ function homeShell() {
 }
 
 const salariesPath = () => "/salaries";
+const gmPath = () => "/gm";
 
 const usd = (value) =>
   value == null ? "—" : `$${value.toLocaleString("en-US")}`;
@@ -349,6 +350,53 @@ function salariesShell() {
       <p>The full table is filterable by position, team, play type, salary band and contract designation, and sortable on every column, with a salary-against-production chart for the players on screen.</p>
       <p>Salaries from the ${esc(salaries.meta.source.name)}; stats from stats.wnba.com.</p>
       <p><a href="${homePath()}">All WNBA teams, ${season}</a></p>`;
+}
+
+/**
+ * The GM tool's shell. It's an interactive page with nothing static to show, so
+ * this describes what the tool does and then spends its links on the pieces it
+ * is built from — the cheapest useful player at each role, which is the tool's
+ * whole subject and a set of players a crawler can follow.
+ */
+function gmShell() {
+  const teamById = new Map(league.teams.map((t) => [t.id, t]));
+  const linkFor = (p) => {
+    const team = teamById.get(p.teamId);
+    return team && p.slug ? `<a href="${teamPathOf(team)}/${p.slug}">${esc(p.name)}</a>` : esc(p.name);
+  };
+
+  const bargains = (salaries.playTypes || [])
+    .map((type) => {
+      const best = salaries.players
+        .filter((p) => p.roleValue && p.roleValue[type.key] != null)
+        .sort((a, b) => b.roleValue[type.key] - a.roleValue[type.key])
+        .slice(0, 3);
+      if (!best.length) return "";
+      const items = best
+        .map((p) => `<li>${linkFor(p)} — ${usd(p.salary)}, ${p.scores[type.key]} out of 100</li>`)
+        .join("");
+      return `<h3>${esc(type.label)}</h3><ul>${items}</ul>`;
+    })
+    .join("");
+
+  const teamLinks = league.teams
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((t) => `<li><a href="${teamPathOf(t)}">${esc(t.name)}</a></li>`)
+    .join("");
+
+  return `<h1>WNBA Virtual GM — ${season} Salary Cap &amp; Roster Builder</h1>
+      <p>Build a ${season} WNBA roster against the salary cap. Start from a real team or from nothing, sign and cut real players at their real ${season} salaries, and watch what the roster can and cannot do — its payroll, its positional balance, and its play-type shape next to a typical team. Nothing is saved anywhere but your own browser.</p>
+      <h2>What you are working with</h2>
+      <ul>
+        <li>${salaries.meta.withSalary} players at their ${season} salaries, from the ${esc(salaries.meta.source.name)}.</li>
+        <li>A default cap of ${usd(salaries.meta.capHint)} — the largest payroll a real team is carrying this season, since no feed publishes a cap figure. It is editable.</li>
+        <li>A roster target of ${salaries.meta.rosterTarget}, and each player's production and play-type scores from this season's game logs.</li>
+      </ul>
+      ${bargains ? `<h2>Best value at each role</h2><p>The cheapest players in the league who are genuinely good at one thing — where a roster under the cap is usually won.</p>${bargains}` : ""}
+      <h2>Teams to start from</h2>
+      <ul>${teamLinks}</ul>
+      <p><a href="${salariesPath()}">Every ${season} salary and play-type score</a> · <a href="${homePath()}">All WNBA teams, ${season}</a></p>`;
 }
 
 function teamShell(team) {
@@ -445,6 +493,33 @@ function breadcrumbs(trail) {
 }
 
 function jsonLdFor({ team, player, path, view }) {
+  if (view === "gm") {
+    return {
+      "@context": "https://schema.org",
+      "@graph": [
+        organization,
+        {
+          "@type": "WebApplication",
+          "@id": SITE_URL + path + "#app",
+          name: "WNBA Virtual GM",
+          applicationCategory: "SportsApplication",
+          operatingSystem: "Any",
+          url: SITE_URL + path,
+          description:
+            `Build a ${season} WNBA roster against the salary cap: sign and cut real players at their real ` +
+            "salaries and see the roster's payroll, balance and play-type shape.",
+          isAccessibleForFree: true,
+          offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+          publisher: { "@id": `${PARENT_URL}/#organization` },
+        },
+        breadcrumbs([
+          { name: `${season} WNBA Stats`, path: homePath() },
+          { name: "Virtual GM", path },
+        ]),
+      ],
+    };
+  }
+
   if (view === "salaries") {
     return {
       "@context": "https://schema.org",
@@ -614,7 +689,12 @@ function buildPage({ team, player, path, tab, view }) {
     "og:image"
   );
 
-  const shell = view === "salaries" ? salariesShell() : player ? playerShell(team, player) : team ? teamShell(team) : homeShell();
+  const shell =
+    view === "salaries" ? salariesShell()
+    : view === "gm" ? gmShell()
+    : player ? playerShell(team, player)
+    : team ? teamShell(team)
+    : homeShell();
   html = replaceOnce(
     html,
     /<div id="root"><\/div>/,
@@ -668,7 +748,8 @@ function renderSeason(year) {
 
   if (salaries) {
     writePage(salariesPath(), buildPage({ path: salariesPath(), view: "salaries" }));
-    count++;
+    writePage(gmPath(), buildPage({ path: gmPath(), view: "gm" }));
+    count += 2;
   }
 
   for (const team of league.teams) {
@@ -706,7 +787,7 @@ const priorityFor = (route) => {
   const archive = /^\/\d{4}(\/|$)/.test(route);
   const depth = route.split("/").filter(Boolean).length;
   if (route === "/") return "1.0";
-  if (route === "/salaries") return "0.9";
+  if (route === "/salaries" || route === "/gm") return "0.9";
   if (archive) return depth <= 1 ? "0.6" : "0.4";
   return depth === 2 ? "0.8" : "0.6";
 };

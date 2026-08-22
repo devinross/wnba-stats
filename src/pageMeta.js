@@ -33,6 +33,17 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
   const yr = season ? `${season} ` : "";
   const canonical = SITE_URL + (path === "/" ? "/" : path);
 
+  if (view === "gm") {
+    return {
+      canonical,
+      title: `WNBA Virtual GM — Salary Cap & Roster Builder`,
+      description:
+        `Build a ${season} WNBA roster against the salary cap. Sign and cut real players, watch the ` +
+        `payroll, and see what your roster's production and play-type balance actually looks like.`,
+      ogTitle: `WNBA Virtual GM — build a roster under the cap`,
+    };
+  }
+
   if (view === "salaries") {
     return {
       canonical,

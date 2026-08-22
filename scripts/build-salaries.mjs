@@ -18,7 +18,7 @@
 // Output: public/data/<season>/salaries.json
 // ---------------------------------------------------------------------------
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -77,6 +77,24 @@ const parseMoney = (value) => {
 // --- the salary sheet ------------------------------------------------------
 
 /**
+ * Which seasons have a salary sheet on disk. Contracts are hand-maintained, so
+ * this is however many years someone has got round to entering — one, at the
+ * time of writing. Everything downstream is written for the general case, so
+ * dropping in data/salaries/2025.csv is the whole of adding a year.
+ */
+function salarySeasons() {
+  try {
+    return readdirSync(csvDir)
+      .map((f) => /^(\d{4})\.csv$/.exec(f))
+      .filter(Boolean)
+      .map((m) => Number(m[1]))
+      .sort((a, b) => b - a);
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
  * name -> { salary, signing, contracts }.
  *
  * A player can appear twice: a hardship or replacement deal and then a
@@ -97,6 +115,13 @@ function readSalaries(season) {
   // fails to match a roster can say which team it claimed to be on, which is
   // most of the work of tracking down a spelling difference.
   const iTeam = header.findIndex((h) => /TEAM/i.test(h));
+  // Next season's contract, if the sheet carries one. A cap sheet is a forward
+  // document: it says what a player is owed next year, or the word for how she
+  // reaches the market when she isn't owed anything. Both are optional, and the
+  // year is read out of the column name so nothing here is pinned to 2027.
+  const iNextSalary = header.findIndex((h) => /^\s*(\d{4})\s+SALARY/i.test(h));
+  const iNextStatus = header.findIndex((h) => /^\s*(\d{4})\s+STATUS/i.test(h));
+  const nextSeason = iNextSalary >= 0 ? Number(/(\d{4})/.exec(header[iNextSalary])[1]) : null;
   if (iName < 0 || iSalary < 0) {
     throw new Error(`${path}: expected PLAYER and SALARY columns, got ${header.join(", ")}`);
   }
@@ -108,19 +133,27 @@ function readSalaries(season) {
     const salary = parseMoney(row[iSalary]);
     const signing = ((iSigning >= 0 && row[iSigning]) || "").trim().replace(/^--$/, "");
     const team = ((iTeam >= 0 && row[iTeam]) || "").trim();
+    const nextSalary = iNextSalary >= 0 ? parseMoney(row[iNextSalary]) : null;
+    const nextStatus = ((iNextStatus >= 0 && row[iNextStatus]) || "").trim() || null;
     const key = normName(name);
     const prev = byName.get(key);
     if (!prev) {
-      byName.set(key, { name, salary, signing: signing || null, team: team || null, contracts: 1 });
+      byName.set(key, {
+        name, salary, signing: signing || null, team: team || null, contracts: 1,
+        nextSalary, nextStatus,
+      });
       continue;
     }
     prev.contracts++;
     prev.salary = (prev.salary || 0) + (salary || 0);
-    // A player's rows all carry the same designation, so the first one that has
-    // it answers for the rest.
+    // A player's rows all carry the same designation and the same next-season
+    // line, so the first one that has them answers for the rest.
     prev.signing = prev.signing || signing || null;
     prev.team = prev.team || team || null;
+    prev.nextSalary = prev.nextSalary ?? nextSalary;
+    prev.nextStatus = prev.nextStatus || nextStatus;
   }
+  byName.nextSeason = nextSeason;
   return byName;
 }
 
@@ -350,8 +383,8 @@ function buildRow(playerId, stints) {
       rimPct: defRim ? defRim.pct : null,
       rimDiff: defRim ? defRim.diff : null,
     },
-    // The raw inputs the play-type scores are built from, kept on the row so
-    // the page can show what a score is made of instead of only its rank.
+    // The inputs the play-type scores are built from. Working state only — it
+    // is deleted before the file is written (see the note at the bottom).
     rates: {
       pts36: r1(per36(pts)),
       reb36: r1(per36(orb + drb)),
@@ -385,6 +418,53 @@ function buildRow(playerId, stints) {
     },
     totals: { fgm, fga, tpm, tpa, ftm, fta, pts, orb, drb, ast, tov, stl, blk },
   };
+}
+
+/**
+ * A light box-score rollup of one season, keyed by playerId — just enough for a
+ * year-over-year line. `playerId` is stable across seasons in this feed (146 of
+ * 2026's 227 players also appear in 2025), which is what makes the join safe;
+ * names are not, and neither is the team.
+ *
+ * Deliberately not buildRow: history needs five numbers, not sixty, and running
+ * the full pipeline over ten archived seasons would multiply the build for
+ * fields nothing reads.
+ */
+function seasonTotals(season) {
+  const dir = resolve(dataDir, String(season));
+  if (!existsSync(resolve(dir, "league.json"))) return null;
+  const league = JSON.parse(readFileSync(resolve(dir, "league.json"), "utf8"));
+  const out = new Map();
+  for (const team of league.teams) {
+    let bundle;
+    try {
+      bundle = JSON.parse(readFileSync(resolve(dir, "teams", `${team.id}.json`), "utf8"));
+    } catch (_) {
+      continue;
+    }
+    for (const player of bundle.roster || []) {
+      const logs = player.logs || [];
+      if (!logs.length) continue;
+      // A player traded mid-season is on two rosters; her stints add up.
+      const at = out.get(player.playerId) || { gp: 0, min: 0, pts: 0, prod: 0, abbrs: [] };
+      at.gp += logs.length;
+      at.min += sum(logs, "min");
+      at.pts += sum(logs, "pts");
+      at.prod += logs.reduce((a, g) => a + gameScore(g), 0);
+      at.abbrs.push(team.abbr);
+      out.set(player.playerId, at);
+    }
+  }
+  return out;
+}
+
+/** The last `count` seasons that have data, newest first. */
+function historySeasons(index, current, count) {
+  return index.seasons
+    .map((s) => Number(s.season))
+    .filter((y) => y <= current)
+    .sort((a, b) => b - a)
+    .slice(0, count);
 }
 
 // --- play-type scoring -----------------------------------------------------
@@ -456,6 +536,7 @@ const PLAY_TYPES = [
   {
     key: "spot",
     label: "Spot-up shooter",
+    abbr: "SPOT",
     blurb: "Catch-and-shoot volume from three, and whether they go in.",
     parts: [
       { weight: 0.50, of: (p) => p.rates.spot336 },
@@ -466,6 +547,7 @@ const PLAY_TYPES = [
   {
     key: "playmaker",
     label: "Playmaker",
+    abbr: "PLAY",
     blurb: "Assists per 36, share of teammate baskets created, and care with the ball.",
     parts: [
       { weight: 0.45, of: (p) => p.rates.ast36 },
@@ -476,6 +558,7 @@ const PLAY_TYPES = [
   {
     key: "post",
     label: "Post scorer",
+    abbr: "POST",
     blurb: "Back-to-basket volume, the interior diet around it, finishing, and fouls drawn.",
     parts: [
       { weight: 0.50, of: (p) => p.rates.post36 },
@@ -489,6 +572,7 @@ const PLAY_TYPES = [
     // "Drive" on every player page — the same feed should not go by two names.
     key: "driving",
     label: "Driving",
+    abbr: "DRIVE",
     blurb: "Getting to the rim off the bounce — drive and floater volume, finishing, and trips to the line.",
     parts: [
       { weight: 0.45, of: (p) => p.rates.drive36 },
@@ -500,6 +584,7 @@ const PLAY_TYPES = [
   {
     key: "scorer",
     label: "Scoring",
+    abbr: "SCORE",
     blurb: "Points per 36, the share of possessions used, and true-shooting efficiency.",
     parts: [
       { weight: 0.45, of: (p) => p.rates.pts36 },
@@ -510,6 +595,7 @@ const PLAY_TYPES = [
   {
     key: "defense",
     label: "Defense",
+    abbr: "DEF",
     blurb:
       "How the team's defense changes with her on the floor, whether the players she guards shoot worse " +
       "than usual, rim protection, steals, and staying out of foul trouble.",
@@ -525,6 +611,7 @@ const PLAY_TYPES = [
   {
     key: "rebounder",
     label: "Rebounding",
+    abbr: "REB",
     blurb: "Rebounds per 36, share of available boards, and work on the offensive glass.",
     parts: [
       { weight: 0.45, of: (p) => p.rates.reb36 },
@@ -702,17 +789,86 @@ for (const row of rows) {
   row.salary = hit ? hit.salary : null;
   row.signing = hit ? hit.signing : null;
   row.contracts = hit ? hit.contracts : 0;
+  // What happens to her after this season. `signed` is the only question the
+  // roster tool has to answer, but the status is what a GM actually needs:
+  // "Reserved" and "RFA" mean the team keeps some hold on her, "UFA" means she
+  // walks into an open market, and no entry at all means the sheet simply
+  // doesn't carry her past this year.
+  row.next = hit && (hit.nextSalary || hit.nextStatus)
+    ? {
+        season: salaries.nextSeason,
+        salary: hit.nextSalary || null,
+        status: hit.nextStatus || (hit.nextSalary ? "Signed" : null),
+        signed: Boolean(hit.nextSalary),
+      }
+    : null;
   if (hit) matched.add(normName(row.name));
 }
 const unmatched = [...salaries.values()]
   .filter((s) => !matched.has(normName(s.name)))
   .map((s) => ({ name: s.name, salary: s.salary, team: s.team || null }));
 
+// --- year over year ---------------------------------------------------------
+// What a player cost and what she produced, season by season. Production comes
+// from the archived seasons already on disk; salary comes from whatever sheets
+// exist, which today is only the current one — so `salary` is null on every
+// past season until data/salaries/<year>.csv is added, and the page says as
+// much rather than drawing a flat line and calling it a trend.
+const HISTORY_SEASONS = 5;
+const years = historySeasons(index, season, HISTORY_SEASONS);
+const totalsByYear = new Map(years.map((y) => [y, y === season ? null : seasonTotals(y)]));
+const salariesByYear = new Map(
+  salarySeasons()
+    .filter((y) => years.includes(y))
+    .map((y) => [y, y === season ? salaries : readSalaries(y)])
+);
+
+for (const row of rows) {
+  row.history = years
+    .map((year) => {
+      const paid = salariesByYear.get(year);
+      const salary = paid ? (paid.get(normName(row.name)) || {}).salary ?? null : null;
+      if (year === season) {
+        return { season: year, gp: row.gp, mpg: row.mpg, ppg: row.ppg, prodPg: row.prodPg, salary: row.salary };
+      }
+      const t = (totalsByYear.get(year) || new Map()).get(row.playerId);
+      if (!t || !t.gp) return salary ? { season: year, gp: 0, salary } : null;
+      return {
+        season: year,
+        gp: t.gp,
+        mpg: r1(t.min / t.gp),
+        ppg: r1(t.pts / t.gp),
+        prodPg: r1(t.prod / t.gp),
+        salary,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.season - b.season);
+}
+
 const { qualified } = scorePlayers(rows);
 
-// Trim the working fields the page doesn't read.
-for (const row of rows) { delete row.shrunk; delete row.totals; }
+// Trim the working fields the page doesn't read. `rates` is the scoring
+// pipeline's scratch space — sixteen per-36 figures per player that exist only
+// to be turned into percentiles — and writing it out cost more than the whole
+// year-over-year history does. What a score is made of is surfaced through the
+// Defense columns and the per-dollar tooltips, from `defense` and `scores`.
+for (const row of rows) { delete row.shrunk; delete row.totals; delete row.rates; }
 rows.sort((a, b) => (b.salary || 0) - (a.salary || 0) || b.prod - a.prod);
+
+// Nothing in any feed carries the salary cap, and the CBA figure isn't
+// published anywhere this build can reach — so the roster tool's default is
+// anchored to the league itself: the biggest payroll anyone is actually
+// carrying, rounded up to the nearest $100k. It is a starting point the page
+// says is a starting point, and the page lets you change it.
+const teamPayroll = new Map();
+for (const row of rows) {
+  if (!row.salary) continue;
+  teamPayroll.set(row.teamId, (teamPayroll.get(row.teamId) || 0) + row.salary);
+}
+const capHint = teamPayroll.size
+  ? Math.ceil(Math.max(...teamPayroll.values()) / 1e5) * 1e5
+  : null;
 
 const out = {
   meta: {
@@ -726,11 +882,25 @@ const out = {
     minGames: MIN_GAMES,
     minMinutes: MIN_MINUTES,
     roleValueFloor: ROLE_VALUE_FLOOR,
+    capHint,
+    rosterTarget: 12,
+    // The seasons the year-over-year view can draw, and which of them have a
+    // salary sheet behind them — the page uses the difference to say what's
+    // missing instead of implying the gap is a $0 contract.
+    historySeasons: years.slice().sort((a, b) => a - b),
+    salarySeasons: salarySeasons(),
+    // The season the sheet projects into, when it carries forward-looking
+    // columns at all. Null turns the offseason view off rather than drawing an
+    // empty one.
+    nextSeason: salaries.nextSeason || null,
     // Salaried players the sheet lists who aren't on any roster in this
     // season's data — waived, overseas, or signed after the last refresh.
     unmatched,
   },
-  playTypes: PLAY_TYPES.map(({ key, label, blurb }) => ({ key, label, blurb })),
+  // `abbr` is for the places a column header or a summary row has no room for
+  // the full label — it lives here so adding an archetype never means editing a
+  // lookup table in the UI.
+  playTypes: PLAY_TYPES.map(({ key, label, abbr, blurb }) => ({ key, label, abbr, blurb })),
   teams: league.teams.map((t) => ({ id: t.id, name: t.name, teamName: t.teamName, abbr: t.abbr, emoji: t.emoji })),
   players: rows,
 };

@@ -3,6 +3,7 @@
 //
 //   /                                         current season, league landing
 //   /salaries                                 current season, salary + play-type table
+//   /gm                                       current season, the roster-building tool
 //   /team/atlanta-dream                       a team's Team tab
 //   /team/atlanta-dream/allisha-gray          a player's Players tab
 //   /2024                                     a past season's landing
@@ -30,6 +31,9 @@ export function slugify(value) {
 }
 
 export const teamSlug = (team) => slugify(team.name);
+
+/** The season-less pages: contract-based tools that only the live season has. */
+export const VIEWS = new Set(["salaries", "gm"]);
 
 /**
  * Slugs for a roster, aligned to its indices. Two players on one roster could
@@ -59,14 +63,14 @@ export function seasonPrefix(season, currentSeason) {
 /**
  * The canonical path for a piece of app state.
  *
- * `view: "salaries"` is the one page that isn't about a team or a season the
- * archive covers — contracts come from a hand-maintained sheet that only exists
- * for the season being played, so it lives at a bare /salaries with no year
- * prefix and no per-season copies.
+ * `view` names the pages that aren't about a team or an archived season —
+ * /salaries and /gm. Both are built on contracts, which come from a
+ * hand-maintained sheet that only exists for the season being played, so they
+ * live at bare paths with no year prefix and no per-season copies.
  */
 export function buildPath({ team, tab, player, season, currentSeason, view }) {
   const prefix = seasonPrefix(season, currentSeason);
-  if (view === "salaries") return "/salaries";
+  if (view) return `/${view}`;
   if (!team) return prefix || "/";
   const base = `${prefix}/team/${teamSlug(team)}`;
   if (tab === "players" && player) return `${base}/${player}`;
@@ -86,10 +90,10 @@ export function parsePath(pathname, { seasons = [], currentSeason } = {}) {
   const parts = String(pathname || "/").split("/").filter(Boolean);
   const known = new Set(seasons.map(Number));
 
-  // Salaries are current-season only (see buildPath), so the route is read
-  // before the year prefix is — "/2024/salaries" is not a page.
-  if (parts.length === 1 && parts[0] === "salaries") {
-    return { season: currentSeason, teamSlug: null, playerSlug: null, view: "salaries", matched: true };
+  // These are current-season only (see buildPath), so they're read before the
+  // year prefix is — "/2024/salaries" is not a page.
+  if (parts.length === 1 && VIEWS.has(parts[0])) {
+    return { season: currentSeason, teamSlug: null, playerSlug: null, view: parts[0], matched: true };
   }
 
   let season = currentSeason;
@@ -130,13 +134,13 @@ export function resolveInSeason({ teamSlug: wantTeam, playerSlug: wantPlayer }, 
  * Every route for one season, in sitemap order. `players: false` stops at team
  * pages — what the build does for past seasons, where ~250 prerendered player
  * pages per archived year would swamp the build for little crawl value.
- * `salaries: true` adds the one salary page, which belongs to the live season
+ * `salaries: true` adds the two contract pages, which belong to the live season
  * alone.
  */
 export function seasonRoutes(league, currentSeason, { players = true, salaries = false } = {}) {
   const prefix = seasonPrefix(league.meta.season, currentSeason);
   const routes = [prefix || "/"];
-  if (salaries) routes.push("/salaries");
+  if (salaries) routes.push("/salaries", "/gm");
   for (const team of league.teams) {
     const base = `${prefix}/team/${teamSlug(team)}`;
     routes.push(base);

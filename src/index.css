@@ -279,3 +279,11 @@ button {
     grid-column: 2 / -1;
   }
 }
+
+/* Virtual GM: roster and player pool sit side by side on a desktop and stack on
+   anything narrower, where two 400px columns would both be unreadable. */
+@media (max-width: 900px) {
+  .gm-layout {
+    grid-template-columns: 1fr !important;
+  }
+}

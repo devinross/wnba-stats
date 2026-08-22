@@ -362,7 +362,7 @@ the one number on this site that isn't fetched — they come from a CSV you keep
 by hand:
 
 ```
-data/salaries/2026.csv     PLAYER, SALARY, SIGNING, TEAM
+data/salaries/2026.csv     PLAYER, SALARY, SIGNING, TEAM, 2027 SALARY, 2027 STATUS
 ```
 
 Copied from the [Her Hoop Stats salary cap
@@ -377,6 +377,14 @@ the work of tracking down a spelling difference.
 A player listed more than once — a hardship deal and then a rest-of-season
 contract, or a mid-season trade — has her rows summed, and the table marks the
 figure `×2`. The designation is taken from whichever of her rows carries one.
+
+**Next season's columns** are what make the Virtual GM's offseason view work. A
+cap sheet is a forward document: `<year> SALARY` is what a player is already
+owed, and `<year> STATUS` is the word for how she reaches the market when she
+isn't (`UFA`, `RFA`, `Reserved`, or `Signed` where a salary is present). The year
+is read out of the column name, so nothing in the code is pinned to 2027 — rename
+the columns and the tool follows. Both are optional; without them the offseason
+toggle simply doesn't appear.
 
 Everything else on the page — per-game production, shooting, usage, the
 play-type scores and the value ranking — is computed from the season's own game
@@ -475,6 +483,106 @@ rim-protecting centers at the top, hunted small guards at the bottom.
 
 Because the sheet only exists for the season being played, `/salaries` has no
 year-prefixed copies — `/2025/salaries` falls back to the 2025 landing page.
+
+---
+
+## Virtual GM
+
+`/gm` is a roster builder on top of the same `salaries.json`. Start from a blank
+roster or any real team, sign and cut players at their real salaries, and watch
+three things move: the payroll against the cap, the positional split, and the
+roster's play-type shape against the average real team. Nothing is fetched when
+you sign someone — every number is already on the rows the salary page loads —
+and the roster is kept in `localStorage` under `wnba-gm`, so it never leaves the
+browser.
+
+**The cap is the one invented number on the site.** No feed publishes one, so
+`build-salaries.mjs` writes `meta.capHint`: the largest payroll any real team is
+actually carrying, rounded up to the nearest $100k (currently $7.2M). The page
+says so, and the field is editable. `meta.rosterTarget` (12) is a guide in the
+same way — going over either turns the number red and stops nothing.
+
+**Starters and bench.** The roster splits into a starting five and everything
+else; the ★ on each row moves a player between them. Starting from a real team
+fills the five with its five most-used players, which on a real roster is by
+definition the five the coach actually started.
+
+**There is no positional rule.** Three forwards and no center is an ordinary
+WNBA lineup, so the five's composition is *reported* (`3G · 1F · 1C`) rather
+than checked against a template. Whether a lineup works is a question about
+production, and the roster shape chart already answers it from production — a
+five with nobody who rebounds shows up there as a rebounding gap, which is both
+truer and more useful than flagging a missing "C".
+
+Position labels are too crude to arbitrate anyway. They come from the roster
+feed's own single letter, so every "G-F" flattens to a guard — and the feed
+returns **no position at all** for 34 of the 227 players, including the entire
+New York and Toronto rosters. Those are counted as `unlisted` in the lineup and
+roster lines rather than dropped, so the numbers still add up to five.
+
+**Bottom lines.** The starting five, the bench and the whole roster each carry a
+summary row: payroll and production per game, which are real sums, and then the
+seven play-type scores, which are not. Adding 0-100 ranks would produce a number
+with no meaning and no ceiling, so those are the same minutes-weighted average
+the shape chart draws — a 60 in the summary row means what a 60 means everywhere
+else on the site. Each play type ships an `abbr` (`SPOT`, `PLAY`, `DEF`…) for
+places with no room for the full label, so adding an archetype never means
+editing a lookup table in the UI.
+
+**Roster shape** is the part worth explaining. Each archetype is averaged across
+the roster weighted by each player's minutes per game, so a starter counts for
+more than a twelfth man; it is last season's usage, not a projection. That value
+is then shown as a gap against the same calculation run over each of the fifteen
+real rosters and averaged.
+
+The gap, rather than the absolute, because a minutes-weighted average of
+percentiles over twelve players has nowhere to go but ~50 — the absolutes all
+cluster in the middle and the differences are what carry the information. This
+was a radar chart first; it was unreadable for exactly that reason, and two
+overlapping heptagons near the centre of a 0–100 axis also distort area. A
+sorted diverging bar is plainer and says more.
+
+The chart compares like with like: **Starting five** measures your five against
+the fifteen real teams' *most-used* fives, **Full roster** measures everything
+against their full rosters.
+
+## The offseason view
+
+With next-season columns present, the GM tool gains a **2026 / 2027 offseason**
+switch. In the offseason it re-reads the same roster forward: who is under
+contract and for how much, who is expiring and under which designation, what is
+already **committed** against the cap, and how much room that leaves.
+
+An expiring player's salary cell becomes an input, because next year her number
+isn't a fact — it's your offer. Payroll counts contracts plus offers; "committed"
+counts contracts only, so the two together say what you owe and what you're
+choosing to owe. The player pool becomes that season's **free-agent class**:
+everyone around the league whose deal is up — keep your own or take someone
+else's. Players already signed elsewhere are excluded by design: moving one of
+those is a trade, and the tool deals in contracts rather than trades.
+
+The numbers here are only what the contracts already say. Nothing projects what a
+free agent would actually command on the market, and the tool doesn't pretend to.
+
+## Year over year
+
+`build-salaries.mjs` writes a five-season `history` on every player — games,
+minutes, points and production per game — joined on `playerId`, which is stable
+across seasons in this feed (146 of 2026's 227 players also appear in 2025).
+Names and teams are not stable, so they aren't used for the join.
+
+That drives two things: a ↑/↓ trend against last season on every row in the GM
+tool, and its **Year over year** panel, which replays your signed roster through
+each season on file. A bar that climbs is a roster on the way up; one that peaked
+two years ago is a roster you're paying for what it used to be.
+
+**Salary history needs more sheets.** `history[].salary` is filled from
+`data/salaries/<year>.csv` for whichever years have one — today that is 2026
+alone, so every earlier season shows `—` rather than a misleading `$0`. The
+reader, the build and the page all handle the general case already: drop in
+`data/salaries/2025.csv` with the same columns and that year fills in on the next
+build, with no code change. `meta.salarySeasons` and `meta.historySeasons` are
+what the page compares to decide what to say about the gap.
 
 ---
 
@@ -650,6 +758,7 @@ src/
   useLeagueData.js      React hooks for the three loads: season index, season, team
   Dashboard.jsx         per-player view (Players tab)
   SalaryView.jsx        the /salaries page: filterable salary + production + play-type table
+  GMView.jsx            the /gm page: roster builder against the cap (localStorage only)
   TeamView.jsx          team view (Team tab): ranking, four factors, lineups, ...
   OnOffChart.jsx        on/off impact scatter (shown on the Team tab)
   PlaymakingChart.jsx   assists vs turnovers per player, with assist-to-turnover ratio
