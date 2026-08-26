@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer,
@@ -125,7 +125,7 @@ export default function OnOffChart({ onOff, selectedName, stale, source }) {
           </ScatterChart>
         </ResponsiveContainer>
       </div>
-      <SourceNote source={source} />
+      <SourceRef source={source} section="On/off impact" />
     </section>
   );
 }

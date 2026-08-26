@@ -12,7 +12,7 @@ import RotationChart from "./RotationChart.jsx";
 import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 import {
   ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
   TeamDefendTable, DefendExplainer,
@@ -153,7 +153,7 @@ function Section({ title, hint, stale, source, children, style }) {
       </div>
       <StaleNote stale={stale} />
       {children}
-      <SourceNote source={source} />
+      <SourceRef source={source} section={title} />
     </section>
   );
 }
@@ -299,8 +299,9 @@ function ProfileTooltip({ active, payload, metric }) {
 }
 
 export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
-  // Footnote links back to the wnba.com page each section was built from, so
-  // any number here can be checked against the source it came from.
+  // Which wnba.com page each section was built from. Sections don't draw this
+  // themselves any more — they register it, and the page lists them all once at
+  // the bottom (see src/PageSources.jsx).
   const src = useMemo(
     () => (key) => sourceFor(key, { season, teamId }),
     [season, teamId]
@@ -560,7 +561,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
             <span>3P {shooting.tpm}/{shooting.tpa}</span><span>·</span>
             <span>FT {shooting.ftm}/{shooting.fta}</span>
           </div>
-          <SourceNote source={src("teamShooting")} />
+          <SourceRef source={src("teamShooting")} section="Team shooting" />
         </section>
 
         {/* Scoring share */}
@@ -584,7 +585,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
               </div>
             </div>
           ))}
-          <SourceNote source={src("scoringShare")} />
+          <SourceRef source={src("scoringShare")} section="Scoring share" />
         </section>
       </div>
 

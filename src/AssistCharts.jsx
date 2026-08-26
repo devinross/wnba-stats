@@ -5,7 +5,7 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 
 // ---------------------------------------------------------------------------
 // What a pass produced — the three things play-by-play can say that a box score
@@ -65,7 +65,7 @@ function Shell({ title, hint, stale, source, children }) {
       </div>
       <StaleNote stale={stale} />
       {children}
-      <SourceNote source={source} />
+      <SourceRef source={source} section={title} />
     </section>
   );
 }

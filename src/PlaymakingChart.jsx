@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, LabelList, ResponsiveContainer,
@@ -128,7 +128,7 @@ export default function PlaymakingChart({ roster, stale, source }) {
       {header}
       <StaleNote stale={stale} />
       {children}
-      <SourceNote source={source} />
+      <SourceRef source={source} section="Playmaking" />
     </section>
   );
 

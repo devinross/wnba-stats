@@ -676,11 +676,15 @@ from a CSV kept by hand, also covered under **Salaries**.
 
 ## Checking the numbers against wnba.com
 
-Every section on the site carries a **source footnote** linking to the
-stats.wnba.com page it was built from, with the season and filters already
-applied, so any number can be opened and checked by hand. The mapping lives in
-`src/sources.js` — one entry per dataset, with query strings that mirror the
-parameter sets in `scripts/fetch-data.mjs`. **If you change a `PerMode` or a
+Every page ends with a **Sources** disclosure — grey, collapsed, and opened by
+the reader who goes looking — listing one line per stats.wnba.com page the
+charts above were built from, with the season and filters already applied, so
+any number can be opened and checked by hand. Sections declare their source
+rather than footnoting themselves (`<SourceRef>` in `src/PageSources.jsx`
+registers it, and the list at the foot of the page renders what registered,
+deduped by page + formula). The mapping lives in `src/sources.js` — one entry
+per dataset, with query strings that mirror the parameter sets in
+`scripts/fetch-data.mjs`. **If you change a `PerMode` or a
 `MeasureType` in the fetch script, change it in `sources.js` too**, or the
 footnote will point at a view that doesn't reconcile.
 
@@ -753,7 +757,7 @@ src/
   routes.js             the URL scheme (slugs, buildPath, parsePath) - shared with the build + fetch
   pageMeta.js           per-route title / description / canonical - shared with the build
   sources.js            each dataset -> the wnba.com page it came from (+ the formulas we apply)
-  SourceNote.jsx        the "Source · wnba.com > ..." footnote under every section
+  PageSources.jsx       collects each section's source and lists them once, at the foot of the page
   BrandMark.jsx         the Highlight Factory app mark (copied from the main site)
   useLeagueData.js      React hooks for the three loads: season index, season, team
   Dashboard.jsx         per-player view (Players tab)

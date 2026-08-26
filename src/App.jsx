@@ -12,6 +12,7 @@ import LeagueView, { todayET } from "./LeagueView.jsx";
 import SalaryView from "./SalaryView.jsx";
 import GMView from "./GMView.jsx";
 import StaleNote from "./StaleNote.jsx";
+import PageSources from "./PageSources.jsx";
 
 function Center({ children }) {
   return (
@@ -875,6 +876,11 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           teamId={team.id}
         />
       )}
+
+      {/* One footnote for the whole page, in place of one per section: each
+          section registers the wnba.com page it was drawn from, and this lists
+          them. See src/PageSources.jsx. */}
+      <PageSources />
 
       {/* The league page already lists every team, as cards. */}
       {!isLeague && !isContracts && <TeamIndex teams={teams} onPick={pickTeam} season={season} currentSeason={currentSeason} />}

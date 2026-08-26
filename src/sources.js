@@ -4,8 +4,9 @@
 // scripts/fetch-data.mjs pulls from the stats.wnba.com JSON endpoints, but each
 // of those endpoints has a human-readable page on the same site showing the
 // same rows with the same filters. This module maps one to the other so every
-// section can footnote its own source and you can open the page and check the
-// numbers by hand.
+// section can name the page behind it — collected into one list at the foot of
+// the page (src/PageSources.jsx) — and you can open it and check the numbers by
+// hand.
 //
 // The query strings here deliberately mirror the parameter sets in
 // fetch-data.mjs (COMMON / TEAM_DASH / PLAYER_DASH / ONOFF / LINEUP_DASH). If

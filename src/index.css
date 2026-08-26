@@ -287,3 +287,28 @@ button {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* The page's Sources list: closed by default, grey rather than white, and
+   deliberately the quietest block on the page. The native disclosure triangle
+   is replaced by our own chevron so it can sit inside the summary's flex row
+   and turn with it; Safari still needs the -webkit- marker hidden by hand. */
+.sources summary {
+  list-style: none;
+}
+.sources summary::-webkit-details-marker {
+  display: none;
+}
+.sources summary:hover {
+  color: var(--txt);
+}
+.sources .sources-chevron {
+  transition: transform 0.15s ease;
+}
+.sources[open] .sources-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sources .sources-chevron {
+    transition: none;
+  }
+}

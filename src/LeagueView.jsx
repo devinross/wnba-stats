@@ -7,7 +7,7 @@ import {
 import TeamBadge from "./TeamBadge.jsx";
 import ShootingWinChart from "./ShootingWinChart.jsx";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 import { sourceFor } from "./sources.js";
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,10 @@ function tipTime(tip) {
   return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function Section({ title, hint, stale, source, children, style }) {
+// `label` is what the section is called in the page's source list. It defaults
+// to the title, and is only worth passing when the title isn't a plain string
+// or isn't stable — the scoreboard's, for one, is the day you're looking at.
+function Section({ title, label, hint, stale, source, children, style }) {
   return (
     <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22, ...style }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -68,7 +71,7 @@ function Section({ title, hint, stale, source, children, style }) {
       </div>
       <StaleNote stale={stale} />
       {children}
-      <SourceNote source={source} />
+      <SourceRef source={source} section={label || title} />
     </section>
   );
 }
@@ -217,6 +220,7 @@ function Scoreboard({ scoreboard, byId, recordOf, teamHref, onGo, stale, source 
         </>
       }
       hint={`${games.length} game${games.length === 1 ? "" : "s"} · times in your timezone`}
+      label="Scoreboard"
       stale={stale}
       source={source}
     >

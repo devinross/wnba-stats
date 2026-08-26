@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, ReferenceLine, Area, AreaChart,
 } from "recharts";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 import { sourceFor } from "./sources.js";
 import {
   ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
@@ -63,7 +63,8 @@ function SplitBar({ label, value, max = 100, color }) {
 }
 
 export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], leagueShotTypes = null, positionShotZones = null, positionShotTypes = null, playerHref, season, teamId }) {
-  // Same footnote links as the Team tab — see src/sources.js.
+  // Same sources as the Team tab — see src/sources.js. Declared here and
+  // listed once at the foot of the page, not under each card.
   const seasonSource = sourceFor("roster", { season, teamId });
   const logSource = sourceFor("playerLog", { season, teamId });
   const zoneSource = sourceFor("playerShotZones", { season, teamId });
@@ -195,7 +196,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <span>3P {agg.tpm}/{agg.tpa}</span><span>·</span>
                 <span>FT {agg.ftm}/{agg.fta}</span>
               </div>
-              <SourceNote source={seasonSource} />
+              <SourceRef source={seasonSource} section="Shooting splits" />
             </section>
 
             <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
@@ -221,7 +222,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                   <Area type="monotone" dataKey="pts" stroke={C.BRAND} strokeWidth={2.5} fill="url(#pg)" dot={{ r: 3, fill: C.BRAND }} activeDot={{ r: 5 }} />
                 </AreaChart>
               </ResponsiveContainer>
-              <SourceNote source={logSource} />
+              <SourceRef source={logSource} section="Points by game" />
             </section>
           </div>
 
@@ -242,7 +243,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
             ) : (
               <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No zone shooting data for this player yet.</p>
             )}
-            <SourceNote source={zoneSource} />
+            <SourceRef source={zoneSource} section="Shooting by zone" />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
@@ -274,7 +275,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
             ) : (
               <p style={{ color: C.MUTE, fontSize: 13, margin: 0 }}>No shot-type data for this player yet.</p>
             )}
-            <SourceNote source={typeSource} />
+            <SourceRef source={typeSource} section="Shot types" />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
@@ -296,7 +297,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                   : "No defensive matchup data for this player yet."}
               </p>
             )}
-            <SourceNote source={defendSource} />
+            <SourceRef source={defendSource} section="Defensive matchups" />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
@@ -313,7 +314,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 <Line type="monotone" dataKey="ts" stroke={C.ACCENT} strokeWidth={2.5} dot={{ r: 3, fill: C.ACCENT }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>
-            <SourceNote source={logSource} />
+            <SourceRef source={logSource} section="True shooting % trend" />
           </section>
 
           <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px" }}>
@@ -357,7 +358,7 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
                 </tbody>
               </table>
             </div>
-            <SourceNote source={logSource} />
+            <SourceRef source={logSource} section="Game log" />
           </section>
         </main>
       </div>

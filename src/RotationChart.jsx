@@ -27,7 +27,7 @@ import React, { useMemo, useState } from "react";
 import { C, FONT_DISPLAY, FONT_BODY } from "./palette";
 import { MetricButton } from "./ShootingWinChart.jsx";
 import StaleNote from "./StaleNote.jsx";
-import SourceNote from "./SourceNote.jsx";
+import { SourceRef } from "./PageSources.jsx";
 
 const MINUTES = 40; // regulation; overtime is in the totals, not the grid
 const QUARTER = 10;
@@ -323,7 +323,7 @@ export default function RotationChart({ rotation, stale, source, selectedName, o
         midseason arrival still shows up in the stretch she played. Rows and their order are fixed
         by the whole season, so switching blocks changes the shading and nothing else.
       </p>
-      <SourceNote source={source} />
+      <SourceRef source={source} section="Rotation pattern" />
     </section>
   );
 }
