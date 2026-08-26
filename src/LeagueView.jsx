@@ -743,7 +743,7 @@ export default function LeagueView({
           stale={stale.teamZoneWins}
           source={src("teamZoneWins")}
         >
-          <ShootingWinChart teamZoneWins={teamZoneWins} />
+          <ShootingWinChart teamZoneWins={teamZoneWins} teams={teams} />
         </Section>
       )}
 

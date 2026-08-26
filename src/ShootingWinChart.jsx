@@ -66,26 +66,42 @@ export function MetricButton({ active, onClick, children }) {
   );
 }
 
-// One dot per team; the selected team (if any) is larger and plum, the rest
-// muted blue, each labelled by abbr.
+// One dot per team, drawn like the league page's "Offense vs defense" scatter:
+// the team's emoji on a card-colored disc with its abbr underneath. The
+// selected team (if any) gets a plum ring and label so it stays findable.
 const renderWinDot = (props) => {
   const { cx, cy, payload } = props;
   if (cx == null || cy == null) return null;
   const sel = payload.isSelected;
-  const fill = sel ? C.BRAND : C.ACCENT;
   return (
     <g>
-      <circle cx={cx} cy={cy} r={sel ? 7 : 5} fill={fill} fillOpacity={sel ? 1 : 0.55} stroke={fill} strokeWidth={sel ? 2 : 1} />
-      <text x={cx + (sel ? 10 : 8)} y={cy + 4} fill={sel ? C.BRAND : C.MUTE} fontSize={11} fontWeight={sel ? 700 : 600} fontFamily={FONT_DISPLAY}>
+      <circle
+        cx={cx} cy={cy} r={sel ? 15 : 13}
+        fill={C.PANEL} stroke={sel ? C.BRAND : C.LINE} strokeWidth={sel ? 2 : 1}
+      />
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={sel ? 15 : 13}>
+        {payload.emoji}
+      </text>
+      <text
+        x={cx} y={cy + (sel ? 26 : 24)} textAnchor="middle"
+        fontSize={10} fill={sel ? C.BRAND : C.MUTE} fontFamily={FONT_DISPLAY} fontWeight={700}
+      >
         {payload.abbr}
       </text>
     </g>
   );
 };
 
-export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
+export default function ShootingWinChart({ teamZoneWins = [], teamId = null, teams = [] }) {
   const [zone, setZone] = useState("three");
   const [mode, setMode] = useState("eff");
+
+  // Team emojis live on the teams list, not on teamZoneWins, so the dots look
+  // them up by id — a team the list hasn't caught up with still gets a ball.
+  const emojiById = useMemo(
+    () => new Map((teams || []).map((t) => [t.id, t.emoji])),
+    [teams]
+  );
 
   const scatter = useMemo(() => {
     const zoneDef = WIN_ZONES.find((z) => z.key === zone) || WIN_ZONES[0];
@@ -93,6 +109,7 @@ export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
       .map((t) => ({
         abbr: t.abbr,
         teamId: t.teamId,
+        emoji: emojiById.get(t.teamId) || "🏀",
         y: t.winPct,
         x: zoneMetric(t.zones, zoneDef.parts, mode),
         isSelected: teamId != null && t.teamId === teamId,
@@ -115,7 +132,7 @@ export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
       }
     }
     return { pts, zoneDef, r, seg, unit: mode === "eff" ? "FG%" : "shot share" };
-  }, [teamZoneWins, zone, mode, teamId]);
+  }, [teamZoneWins, zone, mode, teamId, emojiById]);
 
   if (!scatter.pts.length) return null;
 
@@ -143,8 +160,8 @@ export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
           </>
         )}
       </div>
-      <ResponsiveContainer width="100%" height={360}>
-        <ScatterChart margin={{ top: 16, right: 28, bottom: 28, left: 6 }}>
+      <ResponsiveContainer width="100%" height={400}>
+        <ScatterChart margin={{ top: 20, right: 28, bottom: 30, left: 6 }}>
           <CartesianGrid stroke={C.LINE} strokeDasharray="3 3" />
           <XAxis
             type="number" dataKey="x"
@@ -158,7 +175,7 @@ export default function ShootingWinChart({ teamZoneWins = [], teamId = null }) {
             tick={{ fill: C.MUTE, fontSize: 11 }} stroke={C.LINE}
             label={{ value: "Win %  ↑", angle: -90, position: "insideLeft", fill: C.MUTE, fontSize: 12, style: { textAnchor: "middle" } }}
           />
-          <ZAxis range={[60, 60]} />
+          <ZAxis range={[80, 80]} />
           {scatter.seg && (
             <ReferenceLine segment={scatter.seg} stroke={C.BRAND} strokeDasharray="6 4" strokeOpacity={0.65} ifOverflow="extendDomain" />
           )}

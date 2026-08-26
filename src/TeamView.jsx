@@ -298,7 +298,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], teams = [], playerHref, onPlayer }) {
   // Which wnba.com page each section was built from. Sections don't draw this
   // themselves any more — they register it, and the page lists them all once at
   // the bottom (see src/PageSources.jsx).
@@ -969,7 +969,7 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
         source={src("teamZoneWins")}
       >
         {(teamZoneWins || []).length ? (
-          <ShootingWinChart teamZoneWins={teamZoneWins} teamId={teamId} />
+          <ShootingWinChart teamZoneWins={teamZoneWins} teamId={teamId} teams={teams} />
         ) : (
           <Unavailable what="Team shooting profiles" detail={errors.shotZones} />
         )}

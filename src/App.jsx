@@ -857,6 +857,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           leagueShotZones={leagueShotZones}
           leagueShotTypes={leagueShotTypes}
           teamZoneWins={teamZoneWins}
+          teams={teams}
           playerHref={playerHrefByName}
           onPlayer={goToPlayerByName}
         />
