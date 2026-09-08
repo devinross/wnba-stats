@@ -38,8 +38,8 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
       canonical,
       title: `WNBA Virtual GM — Salary Cap & Roster Builder`,
       description:
-        `Build a ${season} WNBA roster against the salary cap. Sign and cut real players, watch the ` +
-        `payroll, and see what your roster's production and play-type balance actually looks like.`,
+        `Build a ${season} WNBA roster under the salary cap. Sign and cut real players, track the ` +
+        `payroll, and see your roster's production and play-type balance.`,
       ogTitle: `WNBA Virtual GM — build a roster under the cap`,
     };
   }
@@ -95,8 +95,8 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
     canonical,
     title: "WNBA Standings, Scores & Team Stats | Highlight Factory",
     description:
-      "Today's WNBA games, the full league standings, per-game leaders and every team's shot-zone " +
-      "charts, four factors, lineup net ratings and on/off impact. Updated nightly.",
+      "Today's WNBA games, full standings and per-game leaders, plus every team's shot-zone " +
+      "charts, four factors, lineup net ratings and on/off. Updated nightly.",
     ogTitle: "WNBA Standings, Today's Games & Team Stats",
   };
 }
