@@ -71,6 +71,13 @@ const MAX_STALE_DAYS = 21;
 const SCOREBOARD_BACK_DAYS = 8;
 const SCOREBOARD_FWD_DAYS = 10;
 
+// ...except at the end of a season, when what's left to play is short enough to
+// carry whole. A run-in of a few games per team is a couple of KB, and cutting
+// it off ten days out would hide most of it — which is exactly the stretch a
+// visitor is looking ahead to. Mid-season the remaining count is far above this,
+// so the day window above is what applies.
+const SCOREBOARD_TAIL_GAMES = 60;
+
 // A per-game average only counts as a league lead once a player has appeared in
 // this share of her team's games — the WNBA's own qualifier for its leaderboards.
 const LEADER_MIN_SHARE = 0.7;
@@ -1913,8 +1920,22 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     // only ever shows the days around today, and the whole 350-game schedule
     // would be ~45KB in a file every page of the site downloads. A team's full
     // remaining schedule still lives in its own file, as `upcoming`.
+    //
+    // The forward bound comes off once the season's run-in is small enough to
+    // carry whole — counted the way `upcoming` counts it just below, so "what's
+    // left to play" means the same thing in both halves of this block.
+    let remaining = 0;
+    for (const gd of gameDates) {
+      for (const g of gd.games || []) {
+        if (g.gameStatus !== 1) continue;
+        const ts = Date.parse(g.gameDateEst || g.gameDateTimeEst || gd.gameDate);
+        if (!Number.isFinite(ts) || ts >= cutoff) remaining++;
+      }
+    }
     const from = Date.now() - SCOREBOARD_BACK_DAYS * 86400000;
-    const to = Date.now() + SCOREBOARD_FWD_DAYS * 86400000;
+    const to = remaining > 0 && remaining <= SCOREBOARD_TAIL_GAMES
+      ? Infinity
+      : Date.now() + SCOREBOARD_FWD_DAYS * 86400000;
 
     let count = 0;
     for (const gd of gameDates) {
