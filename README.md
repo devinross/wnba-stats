@@ -277,6 +277,15 @@ host needs the SPA fallback described in step 5.
   for a frame — but a crawler that doesn't run JavaScript still gets the
   substance and, importantly, links to follow. It also writes `dist/sitemap.xml`
   and fails the build if the page count and the sitemap ever disagree.
+- **`scripts/indexnow.mjs`** pushes changed URLs to Bing (and the other
+  [IndexNow](https://www.indexnow.org) engines) rather than waiting for a
+  recrawl — Bing's reports otherwise lag the live pages by weeks. The nightly
+  workflow runs it after it pushes, with `--wait` so it only submits once the
+  new deploy is live; it sends the live season's pages from the live sitemap.
+  `npm run indexnow -- --all` submits every page (after an SEO change, say), and
+  `--dry-run` lists them without sending. The key is
+  `public/86bd1ab028baa99a90cf53e50b767959.txt`, public by design — the engines
+  fetch it to verify the submission, so it has to stay deployed.
 - **Internal links.** The sitemap alone isn't enough — pages need to link to
   each other. The team `<select>` isn't crawlable, so there's an "All teams" nav
   above the footer, and the roster rail and the advanced-stats table use real

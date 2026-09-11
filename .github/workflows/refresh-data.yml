@@ -41,6 +41,7 @@ jobs:
           test "$count" -gt 0
 
       - name: Commit if the data changed
+        id: commit
         run: |
           git config user.name "wnba-data-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -50,4 +51,12 @@ jobs:
           else
             git commit -m "chore: nightly WNBA data refresh"
             git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # Tell Bing & co. which pages just changed, once Vercel is serving them.
+      # --wait holds until the live /data/index.json matches this commit, so the
+      # engines never recrawl the pages from before the deploy.
+      - name: Submit changed pages to IndexNow
+        if: steps.commit.outputs.pushed == 'true'
+        run: npm run indexnow -- --wait

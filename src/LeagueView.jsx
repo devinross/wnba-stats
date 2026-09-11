@@ -385,10 +385,13 @@ function StandingsTable({ rows, byId, teamHref, onGo, hasRecords }) {
             // this table — so the eighth row is a real line while the table is
             // in standings order, and meaningless once it isn't.
             const cutline = hasRecords && isDefault && idx === 7 && sorted.length > 8;
+            // Drawn on the cells, not the row: Safari doesn't paint box-shadow
+            // (or borders) on a <tr> in a collapsed table.
+            const rowCell = cutline ? { ...cell, borderBottom: `2px solid ${C.SEPARATOR}` } : cell;
             return (
-              <tr key={t.teamId} style={cutline ? { boxShadow: `inset 0 -2px 0 0 ${C.SEPARATOR}` } : null}>
-                <td style={{ ...cell, color: C.MUTE, fontFamily: FONT_DISPLAY, width: 34 }}>{idx + 1}</td>
-                <td style={{ ...cell, whiteSpace: "nowrap" }}>
+              <tr key={t.teamId}>
+                <td style={{ ...rowCell, color: C.MUTE, fontFamily: FONT_DISPLAY, width: 34 }}>{idx + 1}</td>
+                <td style={{ ...rowCell, whiteSpace: "nowrap" }}>
                   <TeamLink team={team} href={teamHref(team)} onGo={onGo}>
                     <TeamBadge team={team} size={24} />
                     <span style={{ fontWeight: 600 }}>{team.name}</span>
