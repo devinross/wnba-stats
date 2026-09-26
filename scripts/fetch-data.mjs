@@ -592,9 +592,10 @@ function buildGames(teamRows, teamId, rowsByGame, scoreOf) {
  * page has to open with, and computing it once at fetch time keeps the home
  * page from having to download all fifteen team files to add up W-L.
  *
- * Sorted the way the WNBA seeds: win percentage, then point differential. There
- * are no conferences in the standings — the league dropped that split for
- * playoff seeding, so this is one table.
+ * Sorted the way the WNBA seeds: win percentage, with ties broken by the
+ * league's tiebreakers (see breakTies). There are no conferences in the
+ * standings — the league dropped that split for playoff seeding, so this is
+ * one table.
  */
 function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
   const byTeam = new Map(teamIds.map((id) => [id, []]));
@@ -606,7 +607,7 @@ function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
     const tm = Math.max(n(r.PTS), scoreOf(r.GAME_ID, r.TEAM_ID));
     const op = opp ? Math.max(n(opp.PTS), scoreOf(r.GAME_ID, opp.TEAM_ID)) : 0;
     if (tm <= 0 && op <= 0) continue; // scheduled but not yet played
-    list.push({ w: r.WL === "W", home: String(r.MATCHUP || "").includes(" vs"), tm, op });
+    list.push({ w: r.WL === "W", home: String(r.MATCHUP || "").includes(" vs"), tm, op, oppId: opp ? opp.TEAM_ID : null });
   }
 
   const rows = [];
@@ -637,7 +638,16 @@ function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
     });
   }
 
-  rows.sort((a, b) => b.pct - a.pct || b.diff - a.diff);
+  const sorted = [];
+  const byPct = [...rows].sort((a, b) => b.pct - a.pct);
+  for (let i = 0; i < byPct.length; ) {
+    let j = i + 1;
+    while (j < byPct.length && byPct[j].pct === byPct[i].pct) j++;
+    sorted.push(...breakTies(byPct.slice(i, j), byTeam, rows));
+    i = j;
+  }
+  rows.length = 0;
+  rows.push(...sorted);
   // Games behind the leader, the usual half-game arithmetic.
   const lead = rows[0];
   return rows.map((t, i) => ({
@@ -645,6 +655,44 @@ function buildStandings(teamRows, teamIds, rowsByGame, scoreOf) {
     rank: i + 1,
     gb: lead ? Math.round((((lead.w - t.w) + (t.l - lead.l)) / 2) * 10) / 10 : 0,
   }));
+}
+
+/**
+ * Orders teams tied on win percentage using the WNBA's tiebreakers, in order:
+ *   1. win percentage in games among the tied teams (head-to-head)
+ *   2. win percentage against teams at .500 or better
+ *   3. point differential in games among the tied teams
+ *   4. point differential in all games
+ * Each step is applied to the whole group; any subset still tied after a step
+ * starts over from step 1 on its own (so a three-way tie that shakes out to
+ * two teams goes back to their head-to-head).
+ */
+function breakTies(group, byTeam, allRows) {
+  if (group.length < 2) return group;
+  const winning = new Set(allRows.filter((t) => t.pct >= 0.5).map((t) => t.teamId));
+  const pct = (games) => (games.length ? games.filter((g) => g.w).length / games.length : 0);
+  const pdiff = (games) => games.reduce((a, g) => a + g.tm - g.op, 0);
+  const ids = new Set(group.map((t) => t.teamId));
+  const among = (t) => byTeam.get(t.teamId).filter((g) => ids.has(g.oppId));
+  const steps = [
+    (t) => pct(among(t)),
+    (t) => pct(byTeam.get(t.teamId).filter((g) => winning.has(g.oppId))),
+    (t) => pdiff(among(t)),
+    (t) => pdiff(byTeam.get(t.teamId)),
+  ];
+  for (const step of steps) {
+    const keyed = group.map((t) => ({ t, k: step(t) })).sort((a, b) => b.k - a.k);
+    if (keyed[0].k === keyed[keyed.length - 1].k) continue; // didn't separate anyone
+    const out = [];
+    for (let i = 0; i < keyed.length; ) {
+      let j = i + 1;
+      while (j < keyed.length && keyed[j].k === keyed[i].k) j++;
+      out.push(...breakTies(keyed.slice(i, j).map((x) => x.t), byTeam, allRows));
+      i = j;
+    }
+    return out;
+  }
+  return group; // still level after every tiebreaker — the league flips a coin
 }
 
 // The per-game categories the league leaderboard carries, in display order.
