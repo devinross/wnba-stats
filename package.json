@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "fetch": "node scripts/fetch-data.mjs",
-    "postfetch": "node scripts/build-salaries.mjs",
+    "postfetch": "node scripts/build-salaries.mjs && node scripts/build-player-pool.mjs",
+    "pool": "node scripts/build-player-pool.mjs",
     "salaries": "node scripts/build-salaries.mjs",
     "dev": "vite",
     "build": "vite build && node scripts/prerender.mjs",

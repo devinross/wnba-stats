@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 
 import { teamSlug, seasonPrefix, seasonRoutes } from "../src/routes.js";
 import { pageMeta, positionLabel, SITE_URL, OG_IMAGE } from "../src/pageMeta.js";
+import { teamReport, playerReport } from "../src/scouting.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = resolve(root, "dist");
@@ -399,6 +400,31 @@ function gmShell() {
       <p><a href="${salariesPath()}">Every ${season} salary and play-type score</a> · <a href="${homePath()}">All WNBA teams, ${season}</a></p>`;
 }
 
+// The same scouting-report paragraph the app draws at the top of the page.
+const scoutingFinal = () => isArchive || !!(league.meta && league.meta.final);
+function teamScouting(team) {
+  const b = league.data[team.id] || {};
+  try {
+    return teamReport({
+      team, season, final: scoutingFinal(), ...b,
+      teamRanks: league.teamRanks, teamProfiles: league.teamProfiles || [],
+      standings: league.standings || [], teams: league.teams,
+    });
+  } catch (_) { return null; }
+}
+function playerScouting(team, player) {
+  const b = league.data[team.id] || {};
+  try {
+    return playerReport({
+      player, team, season, final: scoutingFinal(), ...b,
+      playerPool: league.playerPool || [], teamProfiles: league.teamProfiles || [],
+      positionShotZones: league.positionShotZones, leagueShotZones: league.leagueShotZones || [],
+      teams: league.teams,
+    });
+  } catch (_) { return null; }
+}
+const scoutingHtml = (text) => (text ? `<h2>Scouting report</h2><p>${esc(text)}</p>` : "");
+
 function teamShell(team) {
   const s = teamSummary(team);
   const b = league.data[team.id] || {};
@@ -419,6 +445,7 @@ function teamShell(team) {
 
   return `<h1>${esc(team.name)} ${season} Stats</h1>
       <p>${esc(team.name)} ${season} season: ${s.wins}–${s.losses}, scoring ${s.ppg} points per game and allowing ${s.oppg} (${s.margin > 0 ? "+" : ""}${s.margin} average margin) across ${s.gp} games. Updated ${esc(updatedHuman)}.</p>
+      ${scoutingHtml(teamScouting(team))}
       <h2>Season summary</h2>
       <ul>
         <li>Record ${s.wins}–${s.losses}.</li>
@@ -447,6 +474,7 @@ function playerShell(team, player) {
   }
   return `<h1>${esc(player.name)} ${season} Stats</h1>
       <p>${esc(player.name)}${player.num ? `, #${esc(player.num)}` : ""}${role ? `, ${role}` : ""} for the <a href="${teamPath}">${esc(team.name)}</a>. ${s.ppg} points, ${s.rpg} rebounds and ${s.apg} assists per game in ${s.gp} games this season, averaging ${s.mpg} minutes. Updated ${esc(updatedHuman)}.</p>
+      ${scoutingHtml(playerScouting(team, player))}
       <h2>${season} per-game averages</h2>
       <ul>
         <li>${s.ppg} points</li>

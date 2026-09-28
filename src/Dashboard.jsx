@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import { SourceRef } from "./PageSources.jsx";
+import ScoutingReport from "./ScoutingReport.jsx";
 import { sourceFor } from "./sources.js";
 import {
   ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
@@ -62,7 +63,7 @@ function SplitBar({ label, value, max = 100, color }) {
   );
 }
 
-export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], leagueShotTypes = null, positionShotZones = null, positionShotTypes = null, playerHref, season, teamId }) {
+export default function Dashboard({ games, roster, sel, setSel, leagueShotZones = [], leagueShotTypes = null, positionShotZones = null, positionShotTypes = null, playerHref, season, teamId, report = null }) {
   // Same sources as the Team tab — see src/sources.js. Declared here and
   // listed once at the foot of the page, not under each card.
   const seasonSource = sourceFor("roster", { season, teamId });
@@ -173,6 +174,8 @@ export default function Dashboard({ games, roster, sel, setSel, leagueShotZones 
               </div>
             </div>
           </div>
+
+          <ScoutingReport text={report} />
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 12, marginBottom: 24 }}>
             <StatTile label="PPG" value={agg.ppg} accent={C.BRAND} />

@@ -12,6 +12,7 @@ import RotationChart from "./RotationChart.jsx";
 import ShootingWinChart, { MetricButton } from "./ShootingWinChart.jsx";
 import CourtChart, { ZoneTable } from "./CourtChart.jsx";
 import StaleNote from "./StaleNote.jsx";
+import ScoutingReport from "./ScoutingReport.jsx";
 import { SourceRef } from "./PageSources.jsx";
 import {
   ShotTypeChart, ShotTypeTable, ShotTypeCaveat,
@@ -298,7 +299,7 @@ function ProfileTooltip({ active, payload, metric }) {
   );
 }
 
-export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], teams = [], playerHref, onPlayer }) {
+export default function TeamView({ games, roster, onOff, fourFactors, teamRanks, playerAdv, lineups, errors = {}, stale = {}, season, teamId, teamName = "Team", teamProfiles = [], upcoming = [], shotZones = null, shotTypes = null, rotation = null, assists = null, leagueShotZones = [], leagueShotTypes = null, teamZoneWins = [], teams = [], playerHref, onPlayer, report = null }) {
   // Which wnba.com page each section was built from. Sections don't draw this
   // themselves any more — they register it, and the page lists them all once at
   // the bottom (see src/PageSources.jsx).
@@ -463,6 +464,8 @@ export default function TeamView({ games, roster, onOff, fourFactors, teamRanks,
 
   return (
     <main className="hf-container" style={{ paddingTop: 24, paddingBottom: 40 }}>
+      <ScoutingReport text={report} />
+
       {/* Headline tiles */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
         <BigTile label="Record" value={`${team.wins}–${team.losses}`} sub={`${team.winPct}% win rate`} accent={C.BRAND} />

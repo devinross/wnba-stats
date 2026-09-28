@@ -13,6 +13,7 @@ import SalaryView from "./SalaryView.jsx";
 import GMView from "./GMView.jsx";
 import StaleNote from "./StaleNote.jsx";
 import PageSources from "./PageSources.jsx";
+import { teamReport, playerReport } from "./scouting.js";
 
 function Center({ children }) {
   return (
@@ -604,6 +605,26 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   const teamLoading = teamState.loading || seasonLoading;
   const player = roster[sel] || null;
 
+  // The scouting-report paragraph at the top of the team and player pages
+  // (src/scouting.js). Built here rather than in the views because it reads
+  // league-wide sets — standings, the player pool — neither view is handed.
+  const final = !isCurrent || !!(meta && meta.final);
+  const scoutingTeam = useMemo(() => {
+    if (!team || teamLoading || !roster.length) return null;
+    return teamReport({
+      team, season, final, games, roster, fourFactors, teamRanks, teamProfiles,
+      standings, teams, onOff, lineups,
+    });
+  }, [team, season, final, bundle, teamLoading, league]);
+  const reportPlayer = roster[Math.min(sel, roster.length - 1)] || null;
+  const scoutingPlayer = useMemo(() => {
+    if (!team || teamLoading || !reportPlayer) return null;
+    return playerReport({
+      player: reportPlayer, team, season, final, games, roster, playerAdv, onOff, assists, rotation,
+      playerPool: league.playerPool || [], teamProfiles, positionShotZones, leagueShotZones, teams,
+    });
+  }, [team, season, final, bundle, teamLoading, league, reportPlayer]);
+
   // Datasets stats.wnba.com didn't return on the last refresh, which the fetch
   // script back-filled from the previous snapshot. League-wide and per-team
   // keys never collide, so one merged map covers every section. Completed
@@ -860,6 +881,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           teams={teams}
           playerHref={playerHrefByName}
           onPlayer={goToPlayerByName}
+          report={scoutingTeam}
         />
       ) : (
         <Dashboard
@@ -875,6 +897,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           playerHref={playerHref}
           season={season}
           teamId={team.id}
+          report={scoutingPlayer}
         />
       )}
 
