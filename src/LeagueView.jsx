@@ -250,6 +250,224 @@ function Scoreboard({ scoreboard, byId, recordOf, teamHref, onGo, stale, source 
   );
 }
 
+// ----- playoff bracket ------------------------------------------------------
+
+// Where a first-round series sits in the bracket, by its higher seed. The WNBA
+// bracket is fixed — 1/8 meets 4/5, 2/7 meets 3/6 — with no reseeding.
+const BRACKET_SLOT = { 1: 0, 8: 0, 4: 1, 5: 1, 2: 2, 7: 2, 3: 3, 6: 3 };
+
+/** "Sun, Sep 28 · 2:00 PM", or just the day while the tip time is TBD. */
+function gameWhen(g) {
+  const day = dayDate(g.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return /tbd/i.test(g.statusText) ? day : `${day} · ${tipTime(g.tip)}`;
+}
+
+/**
+ * Orders the series of each round top to bottom so that every series sits
+ * between the two it's fed by. A later-round series is placed by the
+ * first-round series its teams came out of; one whose teams aren't known yet
+ * keeps the schedule's own order, which lists it the same way.
+ */
+function orderBracket(rounds) {
+  const [first, ...rest] = rounds;
+  if (!first) return [];
+  const firstSorted = [...first.series].sort(
+    (a, b) => (BRACKET_SLOT[a.highSeed] ?? 9) - (BRACKET_SLOT[b.highSeed] ?? 9)
+  );
+  // team -> its first-round slot (0..3)
+  const slotOf = new Map();
+  firstSorted.forEach((s, i) => [s.high, s.low].forEach((t) => t && slotOf.set(t, i)));
+
+  const out = [{ ...first, series: firstSorted }];
+  rest.forEach((round, depth) => {
+    const width = 2 ** (depth + 1); // first-round slots each series spans
+    const placed = round.series.map((s, i) => {
+      const t = s.high || s.low;
+      return { s, pos: t && slotOf.has(t) ? Math.floor(slotOf.get(t) / width) : i };
+    });
+    out.push({ ...round, series: placed.sort((a, b) => a.pos - b.pos).map((x) => x.s) });
+  });
+  return out;
+}
+
+function SeriesCard({ series, bestOf, feeders, byId, teamHref, onGo, final }) {
+  const need = Math.ceil(bestOf / 2);
+  const high = byId.get(series.high);
+  const low = byId.get(series.low);
+  const decided = series.winner != null;
+  // Finished games only: a live score isn't a result yet, and unplayed
+  // if-necessary games past the clinch simply never show.
+  const played = series.games.filter((g) => g.status === 3);
+  const next = decided ? null : series.games.find((g) => g.status === 1 && g.home && g.away);
+  const live = series.games.find((g) => g.status === 2);
+
+  const row = (team, seed, wins, feeder) => {
+    const won = decided && series.winner === team?.id;
+    const lost = decided && !won;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 28 }}>
+        <span style={{ width: 14, fontSize: 11, color: C.MUTE, textAlign: "right", flexShrink: 0 }}>{seed ?? ""}</span>
+        {team ? (
+          <TeamLink team={team} href={teamHref(team)} onGo={onGo} style={{ flex: 1, minWidth: 0 }}>
+            <TeamBadge team={team} size={24} />
+            <span style={{ fontWeight: won ? 700 : 600, fontSize: 13, color: lost ? C.MUTE : C.TXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {team.teamName}
+            </span>
+          </TeamLink>
+        ) : (
+          <span style={{ flex: 1, fontSize: 12, color: C.MUTE, fontStyle: "italic" }}>{feeder || "TBD"}</span>
+        )}
+        {team && (
+          <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16, color: lost ? C.MUTE : C.TXT, minWidth: 12, textAlign: "right" }}>
+            {wins}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // Higher seed on top once both teams are in. With only one in, it goes on
+  // the side of the bracket it came from, opposite the series still going.
+  let rows = [
+    [high, series.highSeed, series.highWins, feeders[0]?.label],
+    [low, series.lowSeed, series.lowWins, feeders[1]?.label],
+  ];
+  if (high && !low && feeders[0] && feeders[1]) {
+    const known = rows[0];
+    rows = feeders[0].teams.includes(high.id)
+      ? [known, [null, null, 0, feeders[1].label]]
+      : [[null, null, 0, feeders[0].label], known];
+  }
+
+  let status;
+  if (!high || !low) status = `Best of ${bestOf}`;
+  else if (decided) {
+    const w = byId.get(series.winner);
+    status = `${w.teamName} win ${Math.max(series.highWins, series.lowWins)}-${Math.min(series.highWins, series.lowWins)}`;
+  } else if (series.highWins === series.lowWins) {
+    status = series.highWins ? `Series tied ${series.highWins}-${series.lowWins}` : `Best of ${bestOf} · first to ${need}`;
+  } else {
+    const leader = series.highWins > series.lowWins ? high : low;
+    status = `${leader.teamName} lead ${Math.max(series.highWins, series.lowWins)}-${Math.min(series.highWins, series.lowWins)}`;
+  }
+
+  return (
+    <div
+      style={{
+        background: C.PANEL_2,
+        border: `1px solid ${final && decided ? C.BRAND : C.LINE}`,
+        borderRadius: 12,
+        padding: "10px 12px",
+        display: "grid",
+        gap: 4,
+      }}
+    >
+      {rows.map(([team, seed, wins, label], i) => (
+        <React.Fragment key={i}>{row(team, seed, wins, label)}</React.Fragment>
+      ))}
+      <div style={{ borderTop: `1px solid ${C.LINE}`, marginTop: 4, paddingTop: 6, display: "grid", gap: 3 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: live ? C.LOSS_FG : decided ? C.MUTE : C.BRAND }}>
+          {live ? `Live · Game ${live.game}` : status}
+        </span>
+        {played.length > 0 && (
+          <span style={{ fontSize: 11, color: C.MUTE, display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
+            {played.map((g) => {
+              const home = byId.get(g.home), away = byId.get(g.away);
+              if (!home || !away) return null;
+              const homeWon = g.homeScore > g.awayScore;
+              return (
+                <span key={g.id} style={{ whiteSpace: "nowrap" }}>
+                  G{g.game} {homeWon ? home.abbr : away.abbr} {Math.max(g.homeScore, g.awayScore)}-{Math.min(g.homeScore, g.awayScore)}
+                </span>
+              );
+            })}
+          </span>
+        )}
+        {next && !live && (
+          <span style={{ fontSize: 11, color: C.MUTE }}>
+            Game {next.game} · {gameWhen(next)}
+            {next.tv && next.tv !== "TBD" ? ` · ${next.tv}` : ""}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The postseason as a bracket: one column per round, each series centered
+// between the two that feed it. Built from league.json's `playoffs`, which the
+// fetch script assembles from the schedule — so it fills in nightly with the
+// rest of the site. Narrow screens scroll the bracket sideways rather than
+// crushing three columns into a phone.
+function Bracket({ playoffs, byId, teamHref, onGo, stale, source }) {
+  const rounds = useMemo(() => orderBracket(playoffs.rounds || []), [playoffs]);
+  if (!rounds.length) return null;
+  const champion = byId.get(playoffs.champion);
+
+  // "Lynx / Liberty" for a slot whose team isn't known yet, or "Semifinal
+  // winner" when the series feeding it hasn't been filled in either.
+  const feeder = (s, round) => {
+    if (!s) return null;
+    const a = byId.get(s.high), b = byId.get(s.low);
+    return {
+      label: a && b ? `${a.teamName} / ${b.teamName}` : `${round.name.replace(/s$/, "")} winner`,
+      teams: [s.high, s.low],
+    };
+  };
+  const feedersFor = (r, i) => {
+    if (r === 0) return [null, null];
+    const prev = rounds[r - 1];
+    return [feeder(prev.series[i * 2], prev), feeder(prev.series[i * 2 + 1], prev)];
+  };
+
+  return (
+    <Section
+      title={champion ? `${champion.teamName} are WNBA champions` : "Playoff bracket"}
+      label="Playoff bracket"
+      hint={rounds.map((r) => `${r.name.toLowerCase()} best of ${r.bestOf}`).join(" · ")}
+      stale={stale}
+      source={source}
+    >
+      <div style={{ overflowX: "auto", margin: "0 -4px", padding: "0 4px 4px" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${rounds.length}, minmax(230px, 1fr))`,
+            gap: 14,
+          }}
+        >
+          {rounds.map((round, r) => (
+            <div key={round.round} style={{ display: "flex", flexDirection: "column" }}>
+              <div
+                style={{
+                  fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 11, letterSpacing: 1,
+                  textTransform: "uppercase", color: C.MUTE, marginBottom: 8,
+                }}
+              >
+                {round.name}
+              </div>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-around", gap: 12 }}>
+                {round.series.map((s, i) => (
+                  <SeriesCard
+                    key={s.id}
+                    series={s}
+                    bestOf={round.bestOf}
+                    feeders={feedersFor(r, i)}
+                    byId={byId}
+                    teamHref={teamHref}
+                    onGo={onGo}
+                    final={r === rounds.length - 1}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 // ----- standings ------------------------------------------------------------
 
 const STREAK = (n) => (!n ? "—" : `${n > 0 ? "W" : "L"}${Math.abs(n)}`);
@@ -583,6 +801,7 @@ export default function LeagueView({
   teams = [],
   standings = [],
   scoreboard = [],
+  playoffs = null,
   leaders = null,
   teamRanks = null,
   teamZoneWins = [],
@@ -652,6 +871,17 @@ export default function LeagueView({
 
   return (
     <main className="hf-container" style={{ paddingTop: 22, paddingBottom: 10 }}>
+      {playoffs && (playoffs.rounds || []).length > 0 && (
+        <Bracket
+          playoffs={playoffs}
+          byId={byId}
+          teamHref={teamHref}
+          onGo={onPickTeam}
+          stale={stale.playoffs}
+          source={src("playoffs")}
+        />
+      )}
+
       {scoreboard.length > 0 && (
         <Scoreboard
           scoreboard={scoreboard}

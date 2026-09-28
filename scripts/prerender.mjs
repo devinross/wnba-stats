@@ -203,6 +203,32 @@ function slateShell(teamById) {
       <ul>${rows}</ul>`;
 }
 
+// The postseason, one line per series: "1 Minnesota Lynx vs. 8 New York
+// Liberty — Lynx lead 1-0". Absent outside the playoffs.
+function bracketShell(teamById) {
+  const rounds = league.playoffs?.rounds || [];
+  if (!rounds.length) return "";
+  const body = rounds
+    .map((r) => {
+      const items = r.series
+        .map((s) => {
+          const hi = teamById.get(s.high), lo = teamById.get(s.low);
+          if (!hi || !lo) return "";
+          const [a, b] = [Math.max(s.highWins, s.lowWins), Math.min(s.highWins, s.lowWins)];
+          const lead = s.highWins >= s.lowWins ? hi : lo;
+          const state = s.winner ? `${lead.teamName} win ${a}-${b}`
+            : a === b ? (a ? `tied ${a}-${b}` : "not started")
+            : `${lead.teamName} lead ${a}-${b}`;
+          return `<li>${s.highSeed ?? ""} <a href="${teamPathOf(hi)}">${esc(hi.name)}</a> vs. ` +
+            `${s.lowSeed ?? ""} <a href="${teamPathOf(lo)}">${esc(lo.name)}</a> — ${esc(state)}</li>`;
+        })
+        .join("");
+      return items ? `<h3>${esc(r.name)} (best of ${r.bestOf})</h3><ul>${items}</ul>` : "";
+    })
+    .join("");
+  return body ? `<h2>${season} WNBA playoff bracket</h2>${body}` : "";
+}
+
 function standingsShell(teamById) {
   const rows = league.standings || [];
   if (!rows.length) return "";
@@ -268,6 +294,7 @@ function homeShell() {
     .join("");
   return `<h1>${season} WNBA Stats</h1>
       <p>${isArchive ? "Final standings" : "Standings, today's games"}, league leaders and team analytics for all ${league.teams.length} WNBA teams, from Highlight Factory. Updated ${esc(updatedHuman)}.</p>
+      ${bracketShell(teamById)}
       ${slateShell(teamById)}
       ${standingsShell(teamById)}
       ${leadersShell(teamById)}

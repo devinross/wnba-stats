@@ -63,6 +63,12 @@ const SOURCES = {
     url: "https://www.wnba.com/schedule",
   }),
 
+  playoffs: () => ({
+    label: "WNBA schedule (postseason)",
+    url: "https://www.wnba.com/playoffs",
+    formula: "Ours, from the league schedule: series scores are counted from its final scores. Seeds are the final regular-season standings.",
+  }),
+
   fourFactors: ({ season }) => ({
     label: "Teams · Four Factors",
     url: `${STATS_HOST}/teams/four-factors/?${qs({ ...SEASON(season), PerMode: "Totals" })}`,

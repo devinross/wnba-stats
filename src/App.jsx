@@ -567,7 +567,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
 
   const { teams, teamRanks, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins, meta } = league;
   const {
-    standings = [], scoreboard = [], leaders = null,
+    standings = [], scoreboard = [], playoffs = null, leaders = null,
   } = league;
   const resolved = useMemo(() => resolveInSeason(route, league), [route, league]);
   // No team in the URL means the league page — the season as a whole — rather
@@ -836,6 +836,7 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
           teams={teams}
           standings={standings}
           scoreboard={scoreboard}
+          playoffs={playoffs}
           leaders={leaders}
           teamRanks={teamRanks}
           teamZoneWins={teamZoneWins}

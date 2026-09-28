@@ -695,6 +695,77 @@ function breakTies(group, byTeam, allRows) {
   return group; // still level after every tiebreaker — the league flips a coin
 }
 
+// ----- playoff bracket -------------------------------------------------------
+
+// Postseason game IDs read 104 + season + 00 + round + series + game number:
+// 1042600213 is the 2026 semifinal series "21", game 3. Regular-season games
+// are 102…, so the prefix alone tells the two apart.
+const PLAYOFF_GAME = /^104\d{7}$/;
+const ROUND_NAMES = { 1: "First round", 2: "Semifinals", 3: "Finals" };
+
+/**
+ * The bracket, built from the schedule's postseason games: one entry per
+ * series with its seeds, the series score, and every game (played or not).
+ *
+ * Teams the schedule hasn't filled in yet (a semifinal before the first round
+ * is done) come through as 0 and stay null here, so the app can draw the slot
+ * as "winner of …". Seeds are the final regular-season standings rank.
+ *
+ * Series length is the highest game number the schedule lists for the round.
+ * If-necessary games can drop off the schedule once a series is decided, so
+ * the length never shrinks below what the previous fetch saw.
+ */
+function buildPlayoffs(games, standings, prev) {
+  if (!games.length) return null;
+  const seedOf = new Map(standings.map((t) => [t.teamId, t.rank]));
+  const prevBestOf = new Map(((prev && prev.rounds) || []).map((r) => [r.round, r.bestOf]));
+
+  const bySeries = new Map();
+  for (const g of games) {
+    const id = String(g.id);
+    const key = id.slice(7, 9); // round + series digit
+    const list = bySeries.get(key) || [];
+    list.push({ ...g, game: Number(id.slice(9)) });
+    bySeries.set(key, list);
+  }
+
+  const rounds = new Map();
+  for (const [key, list] of [...bySeries].sort(([a], [b]) => a.localeCompare(b))) {
+    list.sort((a, b) => a.game - b.game);
+    const round = Number(key[0]);
+    const teams = [...new Set(list.flatMap((g) => [g.home, g.away]).filter(Boolean))];
+    // Higher seed first; game 1 is at their place, so that breaks any doubt.
+    teams.sort((a, b) => (seedOf.get(a) ?? 99) - (seedOf.get(b) ?? 99));
+    const [high = null, low = null] = teams;
+    const winsOf = (tid) =>
+      list.filter((g) => g.status === 3 && (g.home === tid ? g.homeScore > g.awayScore : g.away === tid && g.awayScore > g.homeScore)).length;
+    const r = rounds.get(round) || { round, name: ROUND_NAMES[round] || `Round ${round}`, bestOf: 0, series: [] };
+    r.bestOf = Math.max(r.bestOf, prevBestOf.get(round) || 0, ...list.map((g) => g.game));
+    r.series.push({
+      id: key,
+      high, low,
+      highSeed: high ? seedOf.get(high) ?? null : null,
+      lowSeed: low ? seedOf.get(low) ?? null : null,
+      highWins: high ? winsOf(high) : 0,
+      lowWins: low ? winsOf(low) : 0,
+      games: list.map((g) => ({ ...g, home: g.home || null, away: g.away || null })),
+    });
+    rounds.set(round, r);
+  }
+
+  // A winner once someone reaches a majority of the round's length.
+  for (const r of rounds.values()) {
+    const need = Math.ceil(r.bestOf / 2);
+    for (const s of r.series) {
+      s.winner = s.highWins >= need ? s.high : s.lowWins >= need ? s.low : null;
+    }
+  }
+  const out = [...rounds.values()].sort((a, b) => a.round - b.round);
+  const last = out[out.length - 1];
+  const champion = last && last.series.length === 1 ? last.series[0].winner : null;
+  return { rounds: out, champion };
+}
+
 // The per-game categories the league leaderboard carries, in display order.
 const LEADER_CATS = [
   ["pts", "Points"],
@@ -1946,6 +2017,8 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   // The league-wide slate around today — what the home page's scoreboard reads.
   // Both halves come out of the same response as `upcoming`.
   let scoreboard = [];
+  // Every postseason game on the schedule, however far off — see buildPlayoffs.
+  const playoffGames = [];
   let scheduleErr = null;
   if (!final) {
   step("schedule");
@@ -1996,21 +2069,25 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         // Keyed by the ET calendar date the WNBA schedules against, so the app
         // can ask "what's on today?" in the league's own timezone rather than
         // the visitor's. `tip` is the real kickoff instant, for local times.
-        if (Number.isFinite(ts) && ts >= from && ts <= to) {
-          scoreboard.push({
-            id: g.gameId,
-            date: String(g.gameDateEst || gd.gameDate).slice(0, 10),
-            tip: g.gameDateTimeUTC || null,
-            status: g.gameStatus, // 1 = scheduled, 2 = live, 3 = final
-            statusText: g.gameStatusText || "",
-            home: home.teamId,
-            away: away.teamId,
-            homeScore: g.gameStatus === 1 ? null : n(home.score),
-            awayScore: g.gameStatus === 1 ? null : n(away.score),
-            tv: (g.broadcasters?.nationalBroadcasters || [])
-              .map((b) => b.broadcasterDisplay).filter(Boolean)[0] || null,
-          });
-        }
+        const row = {
+          id: g.gameId,
+          date: String(g.gameDateEst || gd.gameDate).slice(0, 10),
+          tip: g.gameDateTimeUTC || null,
+          status: g.gameStatus, // 1 = scheduled, 2 = live, 3 = final
+          statusText: g.gameStatusText || "",
+          home: home.teamId,
+          away: away.teamId,
+          homeScore: g.gameStatus === 1 ? null : n(home.score),
+          awayScore: g.gameStatus === 1 ? null : n(away.score),
+          tv: (g.broadcasters?.nationalBroadcasters || [])
+            .map((b) => b.broadcasterDisplay).filter(Boolean)[0] || null,
+        };
+        if (Number.isFinite(ts) && ts >= from && ts <= to) scoreboard.push(row);
+
+        // --- every postseason game, outside the window ---
+        // The bracket needs a series' whole history, and the Finals are weeks
+        // past the scoreboard's forward bound when the first round tips.
+        if (PLAYOFF_GAME.test(String(g.gameId))) playoffGames.push(row);
 
         // --- each team's own upcoming list ---
         if (g.gameStatus !== 1) continue; // 1 = scheduled, 2 = live, 3 = final
@@ -2112,6 +2189,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   // Both are rollups of rows already fetched, so neither costs a request.
   const standings = buildStandings(teamRows, teamIds, rowsByGame, scoreOf);
   const leaders = buildLeaders(playerRows, new Map(standings.map((t) => [t.teamId, t.gp])));
+  const playoffs = buildPlayoffs(playoffGames, standings, prev && prev.playoffs);
 
   // League-wide win% + zone shooting per team, for the "shooting profile vs
   // winning" scatter on the Team tab (does shot selection track with winning?).
@@ -2668,7 +2746,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     : null;
 
   // Back-fill the rest of the league-wide sets (the ranking was done above).
-  Object.assign(league, { standings, leaders, scoreboard, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins });
+  Object.assign(league, { standings, leaders, scoreboard, playoffs, teamProfiles, leagueShotZones, leagueShotTypes, positionShotZones, positionShotTypes, teamZoneWins });
   Object.assign(
     leagueStale,
     carryOver(
@@ -2678,7 +2756,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         "teamProfiles", "leagueShotZones", "leagueShotTypes", "positionShotZones", "positionShotTypes", "teamZoneWins", "leaders",
         // A completed season has no slate to show, so an empty scoreboard is the
         // right answer there rather than something to back-fill.
-        ...(final ? [] : ["scoreboard"]),
+        ...(final ? [] : ["scoreboard", "playoffs"]),
       ],
       {
         prevAt,
@@ -2693,6 +2771,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
           teamZoneWins: errLeague.teamShotZones,
           leaders: playerLogErr,
           scoreboard: scheduleErr,
+          playoffs: scheduleErr,
         },
       }
     )
