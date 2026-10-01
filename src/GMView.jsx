@@ -446,10 +446,12 @@ export default function GMView({ data, teams, season, playerHref, onPickPlayer }
       return;
     }
     const id = Number(key);
-    // A real roster as the feed has it, minus the deep-bench names with no
-    // contract on the sheet — they'd read as free players at $0.
+    // A real roster as the league lists it, minus the deep-bench names with no
+    // contract on the sheet — they'd read as free players at $0. `onRoster` is
+    // missing from snapshots built before official rosters were saved, so only
+    // an explicit false (waived, released) leaves a player out.
     const picked = data.players
-      .filter((p) => p.teamId === id && p.salary)
+      .filter((p) => p.teamId === id && p.salary && p.onRoster !== false)
       .sort((a, b) => b.salary - a.salary)
       .slice(0, target);
     setIds(picked.map((p) => p.playerId));

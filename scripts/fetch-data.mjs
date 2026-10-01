@@ -2533,8 +2533,14 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     if (errLeague.ratings) errors.teamRanks = errLeague.ratings;
     if (scheduleErr) errors.schedule = scheduleErr;
 
-    // roster meta (jersey/position)
+    // roster meta (jersey/position), and the official roster itself.
+    //
+    // `roster` above is built from the game log, so it's everyone who played
+    // for this team — including a player who has since moved on. `listed` is
+    // who the league says is on the team right now, by player id, and it's what
+    // the contract pages use to put a player on a team (scripts/build-salaries.mjs).
     const meta = new Map();
+    let listed = [];
     try {
       const rosterRows = toObjects(
         await statsFetch("commonteamroster", { TeamID: String(teamId), Season: String(season), LeagueID: "10" }),
@@ -2544,9 +2550,12 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         meta.set(r.PLAYER_ID, { num: r.NUM, pos: r.POSITION });
         if (!playerPosById.has(r.PLAYER_ID)) playerPosById.set(r.PLAYER_ID, r.POSITION);
       }
+      listed = rosterRows.map((r) => ({ playerId: r.PLAYER_ID, name: r.PLAYER }));
     } catch (e) {
       // Jersey/position are cosmetic, so this never fails the team — but it is
-      // still a request that didn't answer, so the run gets to say so.
+      // still a request that didn't answer, so the run gets to say so. `listed`
+      // falls back to the last snapshot's below.
+      errors.listed = e.message;
       noteFail("roster meta (jersey/position)", e.message, teamName);
     }
     await sleep(DELAY_BETWEEN_CALLS_MS);
@@ -2598,7 +2607,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
     const teamAssists = assistsByTeam.get(teamId) || null;
     if (!teamAssists && assists) errors.assists = assistsErr || "No play-by-play for this team's games yet.";
 
-    const bundle = { games, roster, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, assists: teamAssists, upcoming, errors };
+    const bundle = { games, roster, listed, onOff, fourFactors, playerAdv, lineups, shotZones, shotTypes: teamShotTypes, rotation, assists: teamAssists, upcoming, errors };
 
     // Back-fill this team's empty datasets from the last snapshot.
     const prevBundle = prev ? prev.data[teamId] : null;
@@ -2639,7 +2648,7 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       if (kept) stale[key] = { at: prevAt, reason: failed };
     }
 
-    const fallbackKeys = ["onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation", "assists"];
+    const fallbackKeys = ["listed", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation", "assists"];
     // An empty schedule is legitimate once a season ends, so only reuse the old
     // one when the schedule request actually failed.
     if (scheduleErr) fallbackKeys.push("upcoming");

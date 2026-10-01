@@ -677,10 +677,22 @@ function Shell({ index, league, route, setRoute, seasonLoading }) {
   // which is the team currently in the URL — so these build a path for a team
   // passed in rather than for the selected one.
   const hrefForTeam = (t) => buildPath({ team: t, season, currentSeason, tab: "team" });
+  // The contract pages put a player on her current team, which isn't always one
+  // she has a page under this season — someone who moved after her last game
+  // only has a page on the team she played for. So look on her listed team
+  // first, then anywhere.
   const findPlayer = (teamId, name) => {
-    const t = teams.find((x) => x.id === teamId);
-    const p = t && (t.players || []).find((pl) => pl.name === name);
-    return p ? { team: t, player: p } : null;
+    const onTeam = (t) => {
+      const p = t && (t.players || []).find((pl) => pl.name === name);
+      return p ? { team: t, player: p } : null;
+    };
+    const listed = onTeam(teams.find((x) => x.id === teamId));
+    if (listed) return listed;
+    for (const t of teams) {
+      const hit = onTeam(t);
+      if (hit) return hit;
+    }
+    return null;
   };
   const hrefForPlayer = (teamId, name) => {
     const hit = findPlayer(teamId, name);

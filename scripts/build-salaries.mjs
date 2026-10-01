@@ -139,7 +139,7 @@ function readSalaries(season) {
     const prev = byName.get(key);
     if (!prev) {
       byName.set(key, {
-        name, salary, signing: signing || null, team: team || null, contracts: 1,
+        name, salary, signing: signing || null, team: team || null, teams: team ? [team] : [], contracts: 1,
         nextSalary, nextStatus,
       });
       continue;
@@ -150,6 +150,7 @@ function readSalaries(season) {
     // line, so the first one that has them answers for the rest.
     prev.signing = prev.signing || signing || null;
     prev.team = prev.team || team || null;
+    if (team) prev.teams.push(team);
     prev.nextSalary = prev.nextSalary ?? nextSalary;
     prev.nextStatus = prev.nextStatus || nextStatus;
   }
@@ -158,6 +159,40 @@ function readSalaries(season) {
 }
 
 // --- season data -----------------------------------------------------------
+
+/**
+ * Put each player on the team the league lists her on today, not the last one
+ * she played a game for. The game log only knows where she has been: a player
+ * waived, traded or taken in an expansion draft after her last appearance would
+ * otherwise sit on her old team's payroll in the GM tool. `listed` is each
+ * team's commonteamroster, saved by fetch-data.mjs; a player on none of them
+ * (released, or a snapshot from before `listed` existed) keeps her last team.
+ *
+ * The move is appended to `teams`, so the table footnotes it the same way it
+ * footnotes a mid-season trade. `onRoster` says whether she's on any list at
+ * all, so the GM tool can start a team from its real roster and not from
+ * whoever was waived off it.
+ */
+function placeOnRosters(rows, league, bundles) {
+  const listedOn = new Map();
+  for (const team of league.teams) {
+    for (const p of (bundles.get(team.id) || {}).listed || []) listedOn.set(p.playerId, team);
+  }
+  if (!listedOn.size) {
+    console.warn("salaries: no official rosters in this snapshot — teams are where each player last played.");
+    return;
+  }
+  const moved = [];
+  for (const row of rows) {
+    const team = listedOn.get(row.playerId);
+    row.onRoster = Boolean(team);
+    if (!team || team.id === row.teamId) continue;
+    moved.push(`${row.name} (${row.teams[row.teams.length - 1]} → ${team.abbr})`);
+    row.teamId = team.id;
+    if (row.teams[row.teams.length - 1] !== team.abbr) row.teams.push(team.abbr);
+  }
+  if (moved.length) console.log(`salaries: placed on their current roster: ${moved.join(", ")}`);
+}
 
 function readSeason(season) {
   const seasonDir = resolve(dataDir, String(season));
@@ -176,8 +211,9 @@ function readSeason(season) {
 /**
  * Every stint a player had this season, keyed by playerId. A player traded
  * mid-season is on two rosters with a slice of her games on each; the page
- * wants one row per player, so the stints are merged below and the team shown
- * is whichever one she played for most recently.
+ * wants one row per player, so the stints are merged below. The team shown is
+ * the one the official roster lists her on (see placeOnRosters), falling back
+ * to whichever team she played for most recently.
  */
 function collectStints(league, bundles) {
   const stints = new Map();
@@ -779,11 +815,13 @@ const { league, bundles } = readSeason(season);
 const stints = collectStints(league, bundles);
 
 const rows = [...stints.entries()].map(([playerId, list]) => buildRow(playerId, list));
+placeOnRosters(rows, league, bundles);
 
 // Join the sheet on. Names come from two feeds that don't share ids, so the
 // unmatched ones are reported rather than silently dropped — a rename upstream
 // should be visible in the build log, not as a player quietly missing a salary.
 const matched = new Set();
+const sheetDisagrees = [];
 for (const row of rows) {
   const hit = salaries.get(normName(row.name));
   row.salary = hit ? hit.salary : null;
@@ -803,6 +841,16 @@ for (const row of rows) {
       }
     : null;
   if (hit) matched.add(normName(row.name));
+  // The sheet is copied by hand from a site that can trail a move by weeks, so
+  // a disagreement with the official roster is worth a line in the log — the
+  // roster wins either way (placeOnRosters), but the sheet wants correcting.
+  const abbr = row.teams[row.teams.length - 1];
+  if (hit && hit.teams.length && !hit.teams.includes(abbr)) {
+    sheetDisagrees.push(`${row.name} (sheet ${hit.teams.join("/")}, roster ${abbr})`);
+  }
+}
+if (sheetDisagrees.length) {
+  console.warn(`salaries: sheet team differs from the official roster for ${sheetDisagrees.join(", ")}`);
 }
 const unmatched = [...salaries.values()]
   .filter((s) => !matched.has(normName(s.name)))
