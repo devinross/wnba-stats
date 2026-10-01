@@ -121,7 +121,7 @@ export function SourceRef({ source, section }) {
 /**
  * The one footnote for the whole page: every source that registered, in the
  * order the sections using it appear. Renders nothing on a page that declared
- * none — the salary and Virtual GM pages don't draw from stats.wnba.com.
+ * none. Most sources are wnba.com pages; one that isn't says so with `site`.
  *
  * Closed by default, and grey rather than white, because this is provenance
  * for the reader who goes looking — it shouldn't compete with the charts. A
@@ -163,13 +163,14 @@ export default function PageSources() {
             Sources
           </span>
           <span>
-            {list.length} wnba.com {list.length === 1 ? "page" : "pages"} behind this one
+            {list.length}
+            {list.every((s) => !s.site) ? " wnba.com" : ""} {list.length === 1 ? "page" : "pages"} behind this one
           </span>
         </summary>
 
         <div style={{ padding: "0 20px 16px" }}>
           <p style={{ fontSize: 12, color: C.MUTE, margin: "0 0 4px", lineHeight: 1.55 }}>
-            Every number on this page, and the wnba.com page it came from — open one and the rows
+            Every number on this page, and the page it came from — open one and the rows
             should reconcile. Where a note says the arithmetic is ours, it was done here on top of
             what that page publishes.
           </p>
@@ -214,7 +215,7 @@ export default function PageSources() {
                       textUnderlineOffset: 3,
                     }}
                   >
-                    wnba.com › {s.label}
+                    {s.site || "wnba.com"} › {s.label}
                   </a>
                   {s.formula && (
                     <span

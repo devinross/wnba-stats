@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { C, FONT_DISPLAY } from "./palette";
 import TeamBadge from "./TeamBadge.jsx";
+import { SourceRef } from "./PageSources.jsx";
+import { sourceFor } from "./sources.js";
 
 // ---------------------------------------------------------------------------
 // Virtual GM: build a roster out of real players against a real payroll.
@@ -616,6 +618,7 @@ export default function GMView({ data, teams, season, playerHref, onPickPlayer }
 
   return (
     <main className="hf-container" style={{ paddingTop: 22, paddingBottom: 10 }}>
+      <SourceRef source={sourceFor("salaries", { season })} section="Virtual GM rosters" />
       <section style={panel}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
           <div style={{ display: "grid", gap: 5, minWidth: 220 }}>

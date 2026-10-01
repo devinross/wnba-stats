@@ -269,6 +269,19 @@ const SOURCES = {
     label: "WNBA schedule",
     url: "https://www.wnba.com/schedule",
   }),
+
+  // --- contracts ---------------------------------------------------------
+  // The one source that isn't wnba.com: stats.wnba.com publishes no contract
+  // data. Same URL as SOURCE in scripts/build-salaries.mjs, which is where the
+  // hand-maintained data/salaries/<season>.csv is copied from.
+  salaries: ({ season }) => ({
+    site: "herhoopstats.com",
+    label: "WNBA salary cap sheet",
+    url: "https://herhoopstats.com/salary-cap-sheet/wnba/players/highest_salary/",
+    formula:
+      `Each player's ${season} cap figure, copied by hand, so it can lag a signing. A player on two ` +
+      "contracts in a season (a hardship deal, then a rest-of-season one) is shown at their sum.",
+  }),
 };
 
 // Keys whose URL is team-scoped, so they can't be built before the team is

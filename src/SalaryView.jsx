@@ -6,6 +6,8 @@ import {
 import { C, FONT_DISPLAY } from "./palette";
 import { teamColors } from "./teamColors";
 import TeamBadge from "./TeamBadge.jsx";
+import { SourceRef } from "./PageSources.jsx";
+import { sourceFor } from "./sources.js";
 
 // ---------------------------------------------------------------------------
 // The salary page: every player in the league on one row, with what she is paid
@@ -501,6 +503,7 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
 
   return (
     <main className="hf-container" style={{ paddingTop: 22, paddingBottom: 10 }}>
+      <SourceRef source={sourceFor("salaries", { season })} section={`${season} salaries`} />
       <section style={{ background: C.PANEL, border: `1px solid ${C.LINE}`, borderRadius: 16, padding: "18px 20px", marginBottom: 22 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
           <h2 style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, margin: 0 }}>Filter the league</h2>

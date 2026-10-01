@@ -60,7 +60,6 @@ Caitlin Clark,"$528,846",,IND,"$597,596",Signed
 Awak Kuier,"$525,000",,DAL,,RFA
 Maddy Siegrist,"$501,080",Rookie,DAL,,RFA
 Valeriane Ayayi,"$500,000",,PHX,,Reserved
-DeWanna Bonner,"$500,000",UFA,PHX,,UFA
 Paige Bueckers,"$500,000",Rookie,DAL,"$550,000",Signed
 Megan DiLeo,"$500,000",UFA,PDX,"$525,000",Signed
 Azzi Fudd,"$500,000",,DAL,"$520,000",Signed
@@ -71,6 +70,7 @@ Cameron Brink,"$493,851",Rookie,LAS,"$558,051",Signed
 Dominique Malonga,"$466,913",Rookie,SEA,"$513,605",Signed
 Olivia Miles,"$466,913",,MIN,"$485,590",Signed
 Kamilla Cardoso,"$461,171",Rookie,CHI,"$521,123",Signed
+DeWanna Bonner,"$451,220",UFA,PHX,,UFA
 Iliana Rupert,"$450,000",Reserved,GSV,"$472,500",Signed
 NaLyssa Smith,"$450,000",RFA,LVA,,UFA
 Nyara Sabally,"$436,957",Rookie,TOR,,RFA
@@ -97,7 +97,7 @@ Georgia Amoore,"$355,058",Rookie,WAS,"$390,563",Signed
 Kiki Rice,"$355,058",,TOR,"$369,260",Signed
 Angel Reese,"$350,692",Rookie,ATL,"$396,282",Signed
 Rebecca Allen,"$350,000",UFA,NYL,,UFA
-Nia Coffey,"$350,000",UFA,MIN,"$367,500",Signed
+Nia Brodie,"$350,000",UFA,MIN,"$367,500",Signed
 Jordan Horston,"$332,278",,SEA,,Reserved
 Aneesah Morrow,"$331,563",Rookie,TOR,"$364,720",Signed
 Luisa Geiselsöder,"$325,000",Reserved,PDX,"$341,250",Signed
@@ -138,7 +138,7 @@ Sika Kone,"$277,500",Reserved,ATL,,
 Anastasiia Olairi Kosu,"$277,500",Rookie,MIN,"$305,250",Signed
 Kyara Linskens,"$277,500",UFA,PHX,,Reserved
 Kia Nurse,"$277,500",UFA,TOR,,UFA
-Aaliyah Nye,"$277,500",Rookie,ATL,"$305,250",Signed
+Aaliyah Nye,"$277,500",Rookie,LAS,"$305,250",Signed
 Lucy Olsen,"$277,500",Rookie,WAS,"$305,250",Signed
 Te-Hina Paopao,"$277,500",Rookie,ATL,"$305,250",Signed
 Cheyenne Parker-Tyus,"$277,500",UFA,LVA,,UFA
@@ -175,7 +175,7 @@ Tima Pouye,"$226,098",,TOR,,
 Lexi Held,"$223,354",UFA,PHX,,Reserved
 Alicia Flórez,"$210,732",,WAS,"$288,600",Signed
 Taylor Thierry,"$207,561",Dev,SEA,,Reserved
-Nadia Fingall,"$204,146",,GSV,,
+Nadia Fingall,"$199,756",,GSV,,
 Sug Sutton,"$194,024",UFA,DAL,,UFA
 Kiana Williams,"$182,744",Dev,LAS,,
 Aicha Coulibaly,"$160,244",,CHI,,
@@ -187,11 +187,11 @@ Quionche Carter,"$136,098",,PHX,,
 Ta'Niya Latson,"$136,098",,LAS,,
 Indya Nivar,"$136,098",,ATL,,
 Mai Yamamoto,"$116,341",,LVA,,
+DeWanna Bonner,"$116,098",UFA,ATL,,UFA
 Sania Feagin,"$101,524",Rookie,LAS,,
 Kalani Brown,"$100,000",UFA,PHX,,
 JJ Quinerly,"$90,244",Rookie,DAL,,
 Chloe Bibby,"$85,732",UFA,MIN,,Reserved
-Eliska Joklova,"$81,220",,MIN,,
 Marta Suarez,"$79,024",,PHX,,Reserved
 Kamiah Smalls,"$76,707",UFA,PDX,,
 Marine Fauthoux,"$72,439",,NYL,"$288,600",Signed
@@ -200,6 +200,7 @@ Teaira McCowan,"$69,939",UFA,MIN,,
 Jordan Harrison,"$65,854",,PDX,,Reserved
 Saylor Poffenbarger,"$65,854",,CHI,,
 Mercedes Russell,"$65,427",UFA,IND,,
+Eliska Joklova,"$63,659",,MIN,,
 Amy Okonkwo,"$63,659",Hardship,PDX,,
 Alex Wilson,"$61,463",,WAS,,
 Kiana Williams,"$58,659",Dev,PHX,,
@@ -208,6 +209,7 @@ Hailey Van Lith,"$54,066",Rookie,CON,,
 Ashlon Jackson,"$52,683",,CON,,
 Tonie Morgan,"$52,683",,LAS,"$288,600",Signed
 Lexi Held,"$51,890",UFA,TOR,,Reserved
+Maddy Westbeld,"$47,378",Dev,PHX,,
 Eliska Joklova,"$46,098",,MIN,,
 Marta Suarez,"$46,098",,PHX,,Reserved
 Eliska Joklova,"$43,902",,MIN,,
@@ -215,13 +217,26 @@ Joyner Holmes,"$40,610",Hardship,SEA,,
 Nikolina Milic,"$38,354",,TOR,,
 Julie Vanloo,"$38,354",Hardship,NYL,,
 Shatori Walker-Kimbrough,"$36,098",UFA,IND,,UFA
+Kitija Laksa,"$33,841",,DAL,,
 Kayla Alexander,"$31,586",,TOR,,
 Rayah Marshall,"$31,586",UFA,CON,,
 Aubrey Griffin,"$30,732",,NYL,,
 Grace VanSlooten,"$28,537",,SEA,,
 Ashten Prechtel,"$26,341",,GSV,,
+Shay Ciezki,"$25,000",UFA,PHX,,
 Liatu King,"$24,817",UFA,MIN,,
 Anneli Maley,"$24,146",,PHX,,
+Kalani Brown,"$22,561",Hardship,LVA,,
+Haley Jones,"$18,049",Dev,DAL,,
+Aari McDonald,"$18,049",Hardship,MIN,,
+Anneli Maley,"$17,561",Hardship,NYL,,
+Hailey Van Lith,"$15,793",,CON,,
+Kiana Williams,"$15,793",,PHX,,
+Ornella Bankole,"$15,366",Dev,TOR,,
+Zaay Green,"$15,366",Dev,TOR,,
+Saylor Poffenbarger,"$15,366",,PHX,,
 Jordan Harrison,"$13,171",,PDX,,Reserved
 Peyton Williams,"$13,171",,PHX,,
+Aminata Gueye,"$10,976",,GSV,,
 Holly Winterburn,"$8,780",,ATL,,Reserved
+Morgan Maly,"$4,390",Dev,CHI,,
