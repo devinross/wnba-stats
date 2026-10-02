@@ -35,6 +35,8 @@ const SOURCE = {
 
 const r1 = (n) => Math.round(n * 10) / 10;
 const r2 = (n) => Math.round(n * 100) / 100;
+/** 2.7 -> "+2.7", -3 -> "-3.0" — a difference reads as one only with its sign. */
+const plus = (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
 const sum = (rows, key) => rows.reduce((a, b) => a + (b[key] || 0), 0);
 
 /** Accent- and punctuation-free lowercase name, for joining two sources. */
@@ -444,6 +446,7 @@ function buildRow(playerId, stints) {
       ftr: fga > 0 ? r2(fta / fga) : 0,
       stl36: r1(per36(stl)),
       blk36: r1(per36(blk)),
+      dreb36: r1(per36(drb)),
       // Negated: staying out of foul trouble is the good end, and every part of
       // a score has to point the same way for the percentile blend to work.
       cleanD: r2(-per36(sum(logs, "pf"))),
@@ -515,9 +518,14 @@ const MIN_MINUTES = 150;
 // How much of a defensive reading survives its own sample size. At `prior` the
 // number is halved; well past it, it is kept almost whole. On/off is in
 // on-court minutes, the matchup ones in shots defended.
+//
+// The matchup priors are deliberately heavy. Closest-defender tracking credits
+// whoever is nearest when the shot goes up, so a big rotating onto a driver who
+// already beat her own defender is charged with that shot — the reading needs
+// a lot of attempts before it says more about her than about her help duties.
 const SHRINK_ON = 400;
-const SHRINK_DEF = 150;
-const SHRINK_RIM = 60;
+const SHRINK_DEF = 300;
+const SHRINK_RIM = 120;
 
 // A "best fit" has to be a real strength (FIT_FLOOR), and anything this close to
 // the top one is called alongside it rather than losing on a tiebreak.
@@ -575,9 +583,9 @@ const PLAY_TYPES = [
     abbr: "SPOT",
     blurb: "Catch-and-shoot volume from three, and whether they go in.",
     parts: [
-      { weight: 0.50, of: (p) => p.rates.spot336 },
-      { weight: 0.35, of: (p) => p.shrunk.tp },
-      { weight: 0.15, of: (p) => p.rates.spot3Share },
+      { weight: 0.50, label: "Catch-and-shoot 3PA per 36", of: (p) => p.rates.spot336 },
+      { weight: 0.35, label: "3P%, shrunk toward league average", of: (p) => p.shrunk.tp, show: (v) => `${v}%` },
+      { weight: 0.15, label: "Share of her shots that are spot-up threes", of: (p) => p.rates.spot3Share, show: (v) => `${v}%` },
     ],
   },
   {
@@ -586,9 +594,9 @@ const PLAY_TYPES = [
     abbr: "PLAY",
     blurb: "Assists per 36, share of teammate baskets created, and care with the ball.",
     parts: [
-      { weight: 0.45, of: (p) => p.rates.ast36 },
-      { weight: 0.35, of: (p) => p.astPct },
-      { weight: 0.20, of: (p) => p.rates.astTov },
+      { weight: 0.45, label: "Assists per 36", of: (p) => p.rates.ast36 },
+      { weight: 0.35, label: "Assist % — teammate baskets she set up", of: (p) => p.astPct, show: (v) => `${v}%` },
+      { weight: 0.20, label: "Assist-to-turnover ratio", of: (p) => p.rates.astTov, show: (v) => (v === 99 ? "no turnovers" : String(v)) },
     ],
   },
   {
@@ -597,10 +605,10 @@ const PLAY_TYPES = [
     abbr: "POST",
     blurb: "Back-to-basket volume, the interior diet around it, finishing, and fouls drawn.",
     parts: [
-      { weight: 0.50, of: (p) => p.rates.post36 },
-      { weight: 0.20, of: (p) => p.rates.interior36 },
-      { weight: 0.20, of: (p) => p.shrunk.paint },
-      { weight: 0.10, of: (p) => p.rates.ftr },
+      { weight: 0.50, label: "Post-up shots per 36", of: (p) => p.rates.post36 },
+      { weight: 0.20, label: "Interior shots per 36 (posts, cuts, putbacks, layups)", of: (p) => p.rates.interior36 },
+      { weight: 0.20, label: "Paint FG%, shrunk toward league average", of: (p) => p.shrunk.paint, show: (v) => `${v}%` },
+      { weight: 0.10, label: "Free throws per shot attempt", of: (p) => p.rates.ftr },
     ],
   },
   {
@@ -611,10 +619,10 @@ const PLAY_TYPES = [
     abbr: "DRIVE",
     blurb: "Getting to the rim off the bounce — drive and floater volume, finishing, and trips to the line.",
     parts: [
-      { weight: 0.45, of: (p) => p.rates.drive36 },
-      { weight: 0.20, of: (p) => p.rates.float36 },
-      { weight: 0.20, of: (p) => p.shrunk.drive },
-      { weight: 0.15, of: (p) => p.rates.ftr },
+      { weight: 0.45, label: "Drives per 36", of: (p) => p.rates.drive36 },
+      { weight: 0.20, label: "Floaters per 36", of: (p) => p.rates.float36 },
+      { weight: 0.20, label: "Drive FG%, shrunk toward league average", of: (p) => p.shrunk.drive, show: (v) => `${v}%` },
+      { weight: 0.15, label: "Free throws per shot attempt", of: (p) => p.rates.ftr },
     ],
   },
   {
@@ -623,9 +631,9 @@ const PLAY_TYPES = [
     abbr: "SCORE",
     blurb: "Points per 36, the share of possessions used, and true-shooting efficiency.",
     parts: [
-      { weight: 0.45, of: (p) => p.rates.pts36 },
-      { weight: 0.25, of: (p) => p.usg },
-      { weight: 0.30, of: (p) => p.shrunk.ts },
+      { weight: 0.45, label: "Points per 36", of: (p) => p.rates.pts36 },
+      { weight: 0.25, label: "Usage %", of: (p) => p.usg, show: (v) => `${v}%` },
+      { weight: 0.30, label: "True shooting %, shrunk toward league average", of: (p) => p.shrunk.ts, show: (v) => `${v}%` },
     ],
   },
   {
@@ -634,14 +642,45 @@ const PLAY_TYPES = [
     abbr: "DEF",
     blurb:
       "How the team's defense changes with her on the floor, whether the players she guards shoot worse " +
-      "than usual, rim protection, steals, and staying out of foul trouble.",
+      "than usual, steals or blocks, rim protection, defensive rebounding, and staying out of foul trouble.",
     parts: [
-      { weight: 0.26, of: (p) => p.rates.defImpact },
-      { weight: 0.26, of: (p) => p.rates.defSaved },
-      { weight: 0.14, of: (p) => p.rates.stl36 },
-      { weight: 0.12, of: (p) => p.rates.blk36 },
-      { weight: 0.12, of: (p) => p.rates.defRim },
-      { weight: 0.10, of: (p) => p.rates.cleanD },
+      // The on/off and matchup inputs are ranked on their sample-damped form
+      // (see buildRow), but shown as the readings themselves — nobody can check
+      // a damped number against a box score.
+      {
+        weight: 0.26,
+        label: "Team defensive rating, her on vs off the floor (sample-size damped)",
+        of: (p) => p.rates.defImpact,
+        show: (_, p) => p.defense.defDiff == null ? "—"
+          : `${plus(p.defense.defDiff)} (${p.defense.defOn} on, ${p.defense.defOff} off)`,
+      },
+      {
+        weight: 0.22,
+        label: "FG% of shooters she guarded vs their own season FG% (sample-size damped)",
+        note: "Compared against each shooter's own normal, so guarding stars is not held against her.",
+        of: (p) => p.rates.defSaved,
+        show: (_, p) => p.defense.diff == null ? "—" : `${plus(p.defense.diff)} pts on ${p.defense.fga} shots`,
+      },
+      // Steals and blocks as one input, scored on whichever she ranks higher
+      // in. Taken separately, a wing's block rate and a center's steal rate
+      // both land near the bottom of a league-wide scale, so every perimeter
+      // stopper and every rim protector lost points to the half of the job her
+      // position doesn't do.
+      {
+        weight: 0.20,
+        label: "Steals or blocks per 36, whichever ranks higher",
+        of: (p) => p.rates.events,
+        show: (_, p) => `${p.rates.stl36} stl · ${p.rates.blk36} blk`,
+      },
+      {
+        weight: 0.10,
+        label: "Same comparison at the rim, inside six feet (sample-size damped)",
+        of: (p) => p.rates.defRim,
+        show: (_, p) => p.defense.rimDiff == null ? "—" : `${plus(p.defense.rimDiff)} pts on ${p.defense.rimFga} shots`,
+      },
+      // A defensive possession isn't over until somebody secures the miss.
+      { weight: 0.12, label: "Defensive rebounds per 36", of: (p) => p.rates.dreb36 },
+      { weight: 0.10, label: "Fouls per 36 — fewer ranks higher", of: (p) => p.rates.cleanD, show: (v) => (-v).toFixed(1) },
     ],
   },
   {
@@ -650,9 +689,9 @@ const PLAY_TYPES = [
     abbr: "REB",
     blurb: "Rebounds per 36, share of available boards, and work on the offensive glass.",
     parts: [
-      { weight: 0.45, of: (p) => p.rates.reb36 },
-      { weight: 0.35, of: (p) => p.rebPct },
-      { weight: 0.20, of: (p) => p.rates.orb36 },
+      { weight: 0.45, label: "Rebounds per 36", of: (p) => p.rates.reb36 },
+      { weight: 0.35, label: "Rebound % — share of available boards", of: (p) => p.rebPct, show: (v) => `${v}%` },
+      { weight: 0.20, label: "Offensive rebounds per 36", of: (p) => p.rates.orb36 },
     ],
   },
 ];
@@ -689,6 +728,12 @@ function scorePlayers(rows) {
     };
   }
 
+  // The defensive "events" input is the better of her steal and block ranks,
+  // so those two have to be ranked before the component scales are fitted.
+  const stlRank = percentileFn(pool.map((p) => p.rates.stl36));
+  const blkRank = percentileFn(pool.map((p) => p.rates.blk36));
+  for (const p of rows) p.rates.events = r1(Math.max(stlRank(p.rates.stl36), blkRank(p.rates.blk36)));
+
   // One percentile function per component, fitted on the qualified pool only.
   const scales = new Map();
   for (const type of PLAY_TYPES) {
@@ -700,18 +745,27 @@ function scorePlayers(rows) {
   for (const p of rows) {
     if (p.gp < MIN_GAMES || p.min < MIN_MINUTES) {
       p.scores = null;
+      p.breakdown = null;
       p.fit = null;
       continue;
     }
     const scores = {};
+    // What each score is made of, so the page can show the working: one
+    // [her number as displayed, percentile] pair per part, in PLAY_TYPES order.
+    const breakdown = {};
     for (const type of PLAY_TYPES) {
       let total = 0;
-      type.parts.forEach((part, i) => {
-        total += part.weight * scales.get(`${type.key}:${i}`)(part.of(p) ?? 0);
+      breakdown[type.key] = type.parts.map((part, i) => {
+        const raw = part.of(p);
+        const pctile = scales.get(`${type.key}:${i}`)(raw ?? 0);
+        total += part.weight * pctile;
+        const shown = part.show ? part.show(raw, p) : raw == null ? "—" : String(raw);
+        return [shown, r1(pctile)];
       });
       scores[type.key] = Math.round(total);
     }
     p.scores = scores;
+    p.breakdown = breakdown;
     // What she does furthest above the rest of the league — the label the table
     // leads with. Nobody clearly above average at anything is "Balanced" rather
     // than being handed the least-bad of her scores.
@@ -948,7 +1002,11 @@ const out = {
   // `abbr` is for the places a column header or a summary row has no room for
   // the full label — it lives here so adding an archetype never means editing a
   // lookup table in the UI.
-  playTypes: PLAY_TYPES.map(({ key, label, abbr, blurb }) => ({ key, label, abbr, blurb })),
+  playTypes: PLAY_TYPES.map(({ key, label, abbr, blurb, parts }) => ({
+    key, label, abbr, blurb,
+    // Labels and weights for the breakdown pairs each player carries.
+    parts: parts.map(({ label: partLabel, weight, note }) => ({ label: partLabel, weight, ...(note ? { note } : {}) })),
+  })),
   teams: league.teams.map((t) => ({ id: t.id, name: t.name, teamName: t.teamName, abbr: t.abbr, emoji: t.emoji })),
   players: rows,
 };

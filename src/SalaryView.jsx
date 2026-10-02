@@ -113,6 +113,84 @@ function Score({ value, active }) {
   );
 }
 
+/**
+ * The working behind one score: each input, her number, where that ranks, and
+ * how many of the score's 100 points it earned. A score is a weighted blend of
+ * percentiles, so "points lost" — weight × (100 − percentile) — is exactly how
+ * far each input pulled her below a perfect 100, and the biggest one is the
+ * answer to "why isn't she ranked higher?".
+ */
+function Breakdown({ player, type, qualified, onClose }) {
+  const rows = (player.breakdown && player.breakdown[type.key]) || [];
+  const parts = type.parts || [];
+  const lost = rows.map(([, pct], i) => (parts[i] ? parts[i].weight * (100 - pct) : 0));
+  const worst = lost.indexOf(Math.max(...lost));
+  const th = { padding: "6px 8px", fontWeight: 600, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: C.MUTE, borderBottom: `1px solid ${C.LINE}`, whiteSpace: "nowrap" };
+  const td = { padding: "7px 8px", borderBottom: `1px solid ${C.LINE}55`, verticalAlign: "top" };
+  const right = { ...td, textAlign: "right", fontFamily: FONT_DISPLAY, fontWeight: 700, whiteSpace: "nowrap" };
+  return (
+    <div style={{ padding: "12px 4px 6px", textAlign: "left", fontWeight: 400, fontFamily: "inherit" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14 }}>
+          {player.name} · {type.label} <Score value={player.scores[type.key]} active />
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close breakdown"
+          style={{ appearance: "none", border: "none", background: "transparent", color: C.MUTE, cursor: "pointer", fontSize: 16, padding: "2px 6px" }}
+        >
+          ×
+        </button>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, textAlign: "left" }}>Input</th>
+            <th style={{ ...th, textAlign: "right" }}>Her number</th>
+            <th style={{ ...th, textAlign: "left", width: "22%" }}>Percentile</th>
+            <th style={{ ...th, textAlign: "right" }}>Weight</th>
+            <th style={{ ...th, textAlign: "right" }}>Points</th>
+            <th style={{ ...th, textAlign: "right" }}>Lost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([shown, pct], i) => {
+            const part = parts[i] || {};
+            const isWorst = i === worst && lost[i] >= 5;
+            return (
+              <tr key={i} style={{ background: isWorst ? C.PANEL_2 : undefined }}>
+                <td style={td}>
+                  {part.label}
+                  {part.note && <div style={{ fontSize: 11, color: C.MUTE, marginTop: 2 }}>{part.note}</div>}
+                </td>
+                <td style={right}>{shown}</td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: `${C.LINE}88`, minWidth: 50 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: pct >= 50 ? C.BRAND : C.LOSS_FG, opacity: 0.75 }} />
+                    </div>
+                    <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, minWidth: 26, textAlign: "right" }}>{Math.round(pct)}</span>
+                  </div>
+                </td>
+                <td style={{ ...right, fontWeight: 600, color: C.MUTE }}>{Math.round((part.weight || 0) * 100)}%</td>
+                <td style={right}>{((part.weight || 0) * pct).toFixed(1)}</td>
+                <td style={{ ...right, color: lost[i] >= 5 ? C.LOSS_FG : C.MUTE }}>
+                  {lost[i] >= 0.5 ? `−${lost[i].toFixed(1)}` : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p style={{ fontSize: 11.5, color: C.MUTE, margin: "8px 2px 0", lineHeight: 1.5 }}>
+        Each percentile ranks her among the {qualified} qualified players. The score is the weighted sum of the points
+        column, rounded{rows.length && lost[worst] >= 5 ? <> — the shaded row is what costs her the most.</> : "."}
+      </p>
+    </div>
+  );
+}
+
 // --- columns ----------------------------------------------------------------
 //
 // `best: "low"` marks a column where a small number is the good one, which is
@@ -169,7 +247,8 @@ const DEFENSE_COLUMNS = [
   },
   {
     key: "defense", label: "DEF",
-    hint: "Defense score",
+    hint: "Defense score — click a number to see what it is made of",
+    breakdown: "defense",
     value: (p) => (p.scores ? p.scores.defense : null),
     cell: (p) => <Score value={p.scores ? p.scores.defense : null} />,
   },
@@ -363,10 +442,13 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
   // dollar. Same seven columns either way — only what the number means changes.
   const [basis, setBasis] = useState("score");
   const [sort, setSort] = useState({ key: "salary", dir: -1 });
+  // The one score whose breakdown is open, as { id, key }, or null.
+  const [open, setOpen] = useState(null);
 
   const teamById = useMemo(() => new Map((teams || []).map((t) => [t.id, t])), [teams]);
   const playTypes = data.playTypes || [];
   const typeLabel = useMemo(() => new Map(playTypes.map((t) => [t.key, t.label])), [playTypes]);
+  const typeByKey = useMemo(() => new Map(playTypes.map((t) => [t.key, t])), [playTypes]);
 
   // Contract designations, taken from whatever the sheet actually contains this
   // year rather than a hardcoded list — the CBA's labels change.
@@ -395,6 +477,9 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
           key: t.key,
           label: t.label.split(" ")[0].toUpperCase(),
           title: perDollar ? `${t.label} per dollar` : t.label,
+          hint: perDollar ? undefined : `${t.label} — click a number to see what it is made of`,
+          // Per $ is a rank of score ÷ salary, which the inputs don't explain.
+          breakdown: perDollar ? null : t.key,
           value: at,
           cell: (p) => {
             const v = at(p);
@@ -664,8 +749,13 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
               {sorted.map((p, idx) => {
                 const t = teamById.get(p.teamId);
                 const href = playerHref ? playerHref(p.teamId, p.name) : null;
+                const openType =
+                  open && open.id === p.playerId && columns.some((c) => c.breakdown === open.key) && p.breakdown
+                    ? typeByKey.get(open.key)
+                    : null;
                 return (
-                  <tr key={p.playerId}>
+                  <React.Fragment key={p.playerId}>
+                  <tr>
                     <td style={{ ...cell, color: C.MUTE, fontFamily: FONT_DISPLAY, width: 34 }}>{idx + 1}</td>
                     <td style={{ ...cell, whiteSpace: "nowrap" }}>
                       {href ? (
@@ -716,12 +806,44 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
                           : dash}
                       </td>
                     )}
-                    {columns.map((c) => (
-                      <td key={c.key} style={{ ...num, background: sort.key === c.key ? C.PANEL_2 : undefined }}>
-                        {c.cell(p)}
-                      </td>
-                    ))}
+                    {columns.map((c) => {
+                      const canOpen = c.breakdown && p.breakdown && p.breakdown[c.breakdown];
+                      const isOpen = canOpen && openType && openType.key === c.breakdown;
+                      return (
+                        <td key={c.key} style={{ ...num, background: sort.key === c.key ? C.PANEL_2 : undefined }}>
+                          {canOpen ? (
+                            <button
+                              type="button"
+                              onClick={() => setOpen(isOpen ? null : { id: p.playerId, key: c.breakdown })}
+                              aria-expanded={Boolean(isOpen)}
+                              title={`What ${p.name}'s ${typeLabel.get(c.breakdown)?.toLowerCase()} score is made of`}
+                              style={{
+                                appearance: "none", background: "transparent", cursor: "pointer", font: "inherit", padding: 0,
+                                border: "none", borderRadius: 8,
+                                outline: isOpen ? `2px solid ${C.BRAND}` : "none", outlineOffset: 1,
+                                textDecoration: "underline dotted", textDecorationColor: `${C.MUTE}88`, textUnderlineOffset: 4,
+                              }}
+                            >
+                              {c.cell(p)}
+                            </button>
+                          ) : (
+                            c.cell(p)
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
+                  {openType && (
+                    <tr>
+                      <td colSpan={4 + (showsFit ? 1 : 0) + columns.length} style={{ ...cell, background: C.PANEL, padding: "0 10px 8px" }}>
+                        {/* Sticky so a wide play-type table doesn't scroll the breakdown out of view. */}
+                        <div style={{ position: "sticky", left: 0, maxWidth: 920 }}>
+                          <Breakdown player={p} type={openType} qualified={data.meta.qualified} onClose={() => setOpen(null)} />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
               {!sorted.length && (
@@ -765,7 +887,8 @@ export default function SalaryView({ data, teams, season, playerHref, onPickPlay
           doesn't work. They describe a role, not a grade: a 95 rebounder is not a better player than a 60 one, she is
           a different one. Switching the table to <strong style={{ color: C.TXT }}>Per $</strong> re-ranks the same
           seven columns by score per dollar, which is how you find the cheapest real rebounder or rim protector on the
-          board rather than the best one.
+          board rather than the best one. Click any score in the table to see the inputs behind it and which one
+          costs her the most.
         </p>
         <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "14px 22px", margin: 0 }}>
           {playTypes.map((t) => (
