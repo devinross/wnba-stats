@@ -4,6 +4,7 @@
 //   /                                         current season, league landing
 //   /salaries                                 current season, salary + play-type table
 //   /gm                                       current season, the roster-building tool
+//   /trends                                   every season at once, each team-season a dot
 //   /team/atlanta-dream                       a team's Team tab
 //   /team/atlanta-dream/allisha-gray          a player's Players tab
 //   /2024                                     a past season's landing
@@ -32,8 +33,11 @@ export function slugify(value) {
 
 export const teamSlug = (team) => slugify(team.name);
 
-/** The season-less pages: contract-based tools that only the live season has. */
-export const VIEWS = new Set(["salaries", "gm"]);
+/**
+ * The season-less pages: the contract-based tools that only the live season
+ * has, and the trends page, which is every season at once.
+ */
+export const VIEWS = new Set(["salaries", "gm", "trends"]);
 
 /**
  * Slugs for a roster, aligned to its indices. Two players on one roster could

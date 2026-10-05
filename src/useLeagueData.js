@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadIndex, loadSeason, loadTeam, loadSalaries, prefetchTeam } from "./api";
+import { loadIndex, loadSeason, loadTeam, loadSalaries, loadAllSeasons, prefetchTeam } from "./api";
 
 // The data now arrives in three stages instead of one big file — the season
 // index, then a season, then a team — so each has its own hook and its own
@@ -69,6 +69,16 @@ export function useSalaries(season, { current, enabled = true } = {}) {
     () => loadSalaries(season, { current }),
     [season, current, enabled],
     enabled && season != null
+  );
+}
+
+/** Every season's league file at once — fetched only on /trends. */
+export function useAllSeasons(seasons, currentSeason, { enabled = true } = {}) {
+  const key = (seasons || []).join(",");
+  return useAsync(
+    () => loadAllSeasons(seasons, currentSeason),
+    [key, currentSeason, enabled],
+    enabled && !!key
   );
 }
 

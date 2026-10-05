@@ -44,6 +44,17 @@ export function pageMeta({ team, tab, player, season, path = "/", archive = fals
     };
   }
 
+  if (view === "trends") {
+    return {
+      canonical,
+      title: `WNBA Trends — Shooting & Ratings Across Seasons`,
+      description:
+        `Every WNBA team in every season on one chart: shot profile by zone against win %, and ` +
+        `offensive vs defensive rating, with each season's correlation to winning.`,
+      ogTitle: `WNBA trends — every team-season on one chart`,
+    };
+  }
+
   if (view === "salaries") {
     return {
       canonical,

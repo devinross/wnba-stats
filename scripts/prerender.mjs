@@ -316,6 +316,31 @@ function homeShell() {
 
 const salariesPath = () => "/salaries";
 const gmPath = () => "/gm";
+const trendsPath = () => "/trends";
+
+/**
+ * The trends page's shell: what it plots, and links into every season it
+ * plots. Built during the live season's pass, but it reads only index.json.
+ */
+function trendsShell() {
+  const years = index.seasons.map((s) => Number(s.season)).sort((a, b) => b - a);
+  const first = years[years.length - 1], last = years[0];
+  const teamSeasons = index.seasons.reduce((a, s) => a + (s.teams || 0), 0);
+  const seasonLinks = years
+    .map((y) => `<li><a href="${seasonPrefix(y, currentSeason) || "/"}">${y} WNBA season</a></li>`)
+    .join("");
+  return `<h1>WNBA Trends, ${first}–${last}</h1>
+      <p>Every WNBA team in every season from ${first} to ${last} — ${teamSeasons} team-seasons — plotted on the same charts, so a team can be compared with every other team in league history we have, not only the teams it played that year.</p>
+      <h2>What this covers</h2>
+      <ul>
+        <li>Shooting profile vs winning — each team-season's restricted-area, paint, mid-range and three-point accuracy or shot share against its win percentage, with the trend line and correlation across all of them.</li>
+        <li>Correlation by season — how strongly each zone has tracked with winning, one season at a time.</li>
+        <li>Offense vs defense — every team-season's offensive and defensive rating, raw or relative to that season's league average.</li>
+        <li>Follow a franchise — trace one team's path across seasons.</li>
+      </ul>
+      <h2>Seasons</h2>
+      <ul>${seasonLinks}</ul>`;
+}
 
 const usd = (value) =>
   value == null ? "—" : `$${value.toLocaleString("en-US")}`;
@@ -548,6 +573,33 @@ function breadcrumbs(trail) {
 }
 
 function jsonLdFor({ team, player, path, view }) {
+  if (view === "trends") {
+    return {
+      "@context": "https://schema.org",
+      "@graph": [
+        organization,
+        {
+          "@type": "Dataset",
+          "@id": SITE_URL + path + "#dataset",
+          name: "WNBA team shooting and ratings trends by season",
+          description:
+            "Every WNBA team-season's shot profile by zone, win percentage and offensive and defensive rating, " +
+            "compared across seasons.",
+          url: SITE_URL + path,
+          isAccessibleForFree: true,
+          dateModified: updatedISO,
+          temporalCoverage: `${Math.min(...index.seasons.map((s) => Number(s.season)))}/${currentSeason}`,
+          creator: { "@id": `${PARENT_URL}/#organization` },
+          keywords: ["WNBA trends", "WNBA shooting", "offensive rating", "defensive rating", "basketball analytics"],
+        },
+        breadcrumbs([
+          { name: `${season} WNBA Stats`, path: homePath() },
+          { name: "Trends", path },
+        ]),
+      ],
+    };
+  }
+
   if (view === "gm") {
     return {
       "@context": "https://schema.org",
@@ -745,7 +797,8 @@ function buildPage({ team, player, path, tab, view }) {
   );
 
   const shell =
-    view === "salaries" ? salariesShell()
+    view === "trends" ? trendsShell()
+    : view === "salaries" ? salariesShell()
     : view === "gm" ? gmShell()
     : player ? playerShell(team, player)
     : team ? teamShell(team)
@@ -801,6 +854,13 @@ function renderSeason(year) {
   writePage(homePath(), buildPage({ path: homePath() }));
   count++;
 
+  // Every season at once, so it's written once — on the live season's pass.
+  if (!isArchive) {
+    writePage(trendsPath(), buildPage({ path: trendsPath(), view: "trends" }));
+    routes.push(trendsPath());
+    count++;
+  }
+
   if (salaries) {
     writePage(salariesPath(), buildPage({ path: salariesPath(), view: "salaries" }));
     writePage(gmPath(), buildPage({ path: gmPath(), view: "gm" }));
@@ -842,7 +902,7 @@ const priorityFor = (route) => {
   const archive = /^\/\d{4}(\/|$)/.test(route);
   const depth = route.split("/").filter(Boolean).length;
   if (route === "/") return "1.0";
-  if (route === "/salaries" || route === "/gm") return "0.9";
+  if (route === "/salaries" || route === "/gm" || route === "/trends") return "0.9";
   if (archive) return depth <= 1 ? "0.6" : "0.4";
   return depth === 2 ? "0.8" : "0.6";
 };
