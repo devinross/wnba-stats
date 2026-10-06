@@ -1924,6 +1924,11 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
   // succeed and return nothing, which reads as a failure in the log and sends
   // --repair back to retry them every night.
   let defendByPlayer = new Map();
+  // Category keys that didn't come back on a night when others did. The roster
+  // loop back-fills just those from the last snapshot — otherwise one bad
+  // request writes a player out with "Overall" missing, and every later night
+  // that fails outright carries that hole forward.
+  let defendGaps = [];
   if (season >= DEFEND_FIRST_SEASON) {
     step("shotDefend");
     const collected = [];
@@ -1949,6 +1954,8 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
       // A partial answer is still worth keeping: a player with five of six
       // categories is more useful than none, as long as the log says so.
       const kept = collected.length - shaped.skipped.length;
+      const got = new Set(collected.map(([key]) => key).filter((key) => !shaped.skipped.includes(key)));
+      defendGaps = DEFEND_CATEGORIES.map(([, key]) => key).filter((key) => !got.has(key));
       done(`${defendByPlayer.size} defenders · ${kept}/${DEFEND_CATEGORIES.length} categories`
         + (failures.length ? ` · ${failures.length} failed` : "")
         + (shaped.skipped.length ? ` · unreadable columns: ${shaped.skipped.join(", ")}` : ""));
@@ -2646,6 +2653,20 @@ async function fetchSeason(season, { outDir, final, nth, of, rotations = true, r
         kept++;
       }
       if (kept) stale[key] = { at: prevAt, reason: failed };
+    }
+    // Same idea one level down: some defend categories failed but not all, so
+    // top up each player's list with the missing categories from last time.
+    if (defendGaps.length && !errLeague.shotDefend && prevBundle) {
+      const order = new Map(DEFEND_CATEGORIES.map(([, key], i) => [key, i]));
+      const prevById = new Map((prevBundle.roster || []).map((p) => [p.playerId, p.shotDefend || []]));
+      let kept = 0;
+      for (const p of bundle.roster) {
+        const old = (prevById.get(p.playerId) || []).filter((r) => defendGaps.includes(r.c));
+        if (!old.length) continue;
+        p.shotDefend = [...(p.shotDefend || []), ...old].sort((a, b) => order.get(a.c) - order.get(b.c));
+        kept++;
+      }
+      if (kept) stale.shotDefend = { at: prevAt, reason: `no fresh ${defendGaps.join(", ")} rows` };
     }
 
     const fallbackKeys = ["listed", "onOff", "fourFactors", "playerAdv", "lineups", "shotZones", "shotTypes", "rotation", "assists"];
