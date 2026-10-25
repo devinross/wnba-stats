@@ -36,8 +36,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { teamSlug, seasonPrefix, seasonRoutes } from "../src/routes.js";
-import { pageMeta, positionLabel, SITE_URL, OG_IMAGE } from "../src/pageMeta.js";
+import { pageMeta, positionLabel, ogImagePath, SITE_URL } from "../src/pageMeta.js";
 import { teamReport, playerReport } from "../src/scouting.js";
+import { renderCard } from "./og-cards.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = resolve(root, "dist");
@@ -746,6 +747,128 @@ function jsonLdFor({ team, player, path, view }) {
 // Each replacement asserts it matched, so a future edit to index.html that
 // changes the shape of one of these tags fails the build instead of silently
 // shipping 254 pages that all claim to be the league landing.
+// --- social cards ----------------------------------------------------------
+// What each page's share image says (drawn by scripts/og-cards.mjs): the
+// numbers someone would want to see in the unfurl before tapping through.
+
+const f1 = (n) => Number(n).toFixed(1);
+const signed = (n) => `${n > 0 ? "+" : ""}${f1(n)}`;
+const money = (v) => (v >= 1e6 ? `$${f1(v / 1e6)}M` : `$${Math.round(v / 1000)}K`);
+const lastName = (name) => {
+  const words = String(name).trim().split(/\s+/);
+  return words.length > 1 ? [words[0], words.slice(1).join(" ")] : [name];
+};
+
+function cardFor({ team, player, view }) {
+  const eyebrow = `${season} season`;
+
+  if (view === "trends") {
+    const years = index.seasons.map((s) => Number(s.season));
+    return {
+      eyebrow: `${Math.min(...years)}–${Math.max(...years)}`,
+      lines: ["WNBA", "Trends."],
+      subtitle: "Every team-season on one chart.",
+      chips: ["Shot profile vs win %", "Off vs def rating", "Franchise paths"],
+    };
+  }
+
+  if (view === "salaries" || view === "gm") {
+    const paid = salaries.players.filter((p) => p.salary).sort((a, b) => b.salary - a.salary);
+    return view === "salaries"
+      ? {
+          eyebrow,
+          lines: [`${season} WNBA`, "Salaries."],
+          subtitle: "Every contract next to what the player produced.",
+          stats: [
+            { value: String(salaries.meta.withSalary), label: "Contracts" },
+            { value: paid[0] ? money(paid[0].salary) : "—", label: "Top salary" },
+            { value: paid.length ? money(paid[Math.floor(paid.length / 2)].salary) : "—", label: "Median" },
+          ],
+        }
+      : {
+          eyebrow,
+          lines: ["Virtual", "GM."],
+          subtitle: `Build a ${season} roster under the cap.`,
+          stats: [
+            { value: money(salaries.meta.capHint), label: "Default cap" },
+            { value: String(salaries.meta.withSalary), label: "Signable players" },
+            { value: String(salaries.meta.rosterTarget), label: "Roster spots" },
+          ],
+        };
+  }
+
+  if (player) {
+    const s = playerSummary(player);
+    const role = positionLabel(player.pos);
+    const sub = [player.num && `#${player.num}`, role && role[0].toUpperCase() + role.slice(1), team.name]
+      .filter(Boolean)
+      .join(" · ");
+    return {
+      eyebrow,
+      team,
+      lines: lastName(player.name),
+      subtitle: sub,
+      stats: s
+        ? [
+            { value: f1(s.ppg), label: "PPG" },
+            { value: f1(s.rpg), label: "RPG" },
+            { value: f1(s.apg), label: "APG" },
+            { value: `${f1(s.ts)}%`, label: "TS%" },
+          ]
+        : [{ value: "—", label: `No ${season} games yet` }],
+    };
+  }
+
+  if (team) {
+    const s = teamSummary(team);
+    const ranks = (league.teamRanks?.teams || []).slice().sort((a, b) => b.net - a.net);
+    const netRank = ranks.findIndex((t) => t.teamId === team.id);
+    const lines = team.city && team.teamName && team.name !== team.teamName ? [team.city, team.teamName] : [team.name];
+    return {
+      eyebrow,
+      team,
+      lines,
+      subtitle: isArchive ? "Shot charts, four factors & lineups" : "Team stats, shot charts & lineups",
+      stats: s.gp
+        ? [
+            { value: `${s.wins}–${s.losses}`, label: "Record" },
+            { value: f1(s.ppg), label: "PPG" },
+            s.rank ? { value: signed(s.rank.net), label: "Net rating" } : { value: signed(s.margin), label: "Margin" },
+            ...(netRank >= 0 ? [{ value: `#${netRank + 1}`, label: "Net rank" }] : []),
+          ]
+        : [{ value: "—", label: `No ${season} games yet` }],
+    };
+  }
+
+  // A season's landing page: the champion if there is one, else the best record,
+  // and the scoring leader.
+  const teamById = new Map(league.teams.map((t) => [t.id, t]));
+  const finals = (league.playoffs?.rounds || []).at(-1)?.series?.[0];
+  const champ = finals?.winner ? teamById.get(finals.winner) : null;
+  const best = (league.standings || [])[0];
+  const bestTeam = best && teamById.get(best.teamId);
+  const scorer = league.leaders?.pts?.[0];
+  const stats = [];
+  if (champ) stats.push({ value: champ.teamName, label: "Champion" });
+  if (bestTeam) stats.push({ value: `${bestTeam.abbr} ${best.w}–${best.l}`, label: "Best record" });
+  if (scorer) stats.push({ value: `${f1(scorer.v)} PPG`, label: `${lastName(scorer.name).at(-1)}, top scorer` });
+  return {
+    eyebrow: isArchive ? `${season} season · final` : eyebrow,
+    lines: isArchive ? [`${season} WNBA`, "Season."] : ["WNBA", "Stats."],
+    subtitle: isArchive
+      ? "Final standings, leaders, shot charts & lineups."
+      : "Standings, shot charts, lineups & on/off — nightly.",
+    stats: stats.length ? stats : undefined,
+    chips: stats.length ? undefined : ["Shot zones", "Four factors", "Lineups", "On/off", "League ranks"],
+  };
+}
+
+function writeCard(path, spec) {
+  const file = resolve(distDir, "." + ogImagePath(path));
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, renderCard(spec));
+}
+
 function replaceOnce(html, pattern, replacement, label) {
   if (!pattern.test(html)) {
     console.error(`prerender: no match for ${label} in index.html — the template shape changed.`);
@@ -789,11 +912,27 @@ function buildPage({ team, player, path, tab, view }) {
     `<meta property="og:url" content="${meta.canonical}" />`,
     "og:url"
   );
+  // Each page gets its own card. The ?v= changes whenever the data does, so
+  // apps that cache unfurls by URL (Messages, Slack) pick up tonight's numbers.
+  writeCard(path, cardFor({ team, player, view }));
+  const ogImage = `${SITE_URL}${ogImagePath(path)}?v=${updatedISO.slice(0, 10).replace(/-/g, "")}`;
   html = replaceOnce(
     html,
     /<meta property="og:image" [^>]*>/,
-    `<meta property="og:image" content="${OG_IMAGE}" />`,
+    `<meta property="og:image" content="${ogImage}" />`,
     "og:image"
+  );
+  html = replaceOnce(
+    html,
+    /<meta property="og:image:alt"[^>]*>/,
+    `<meta property="og:image:alt" content="${esc(meta.ogTitle)}" />`,
+    "og:image:alt"
+  );
+  html = replaceOnce(
+    html,
+    /<meta name="twitter:image"[^>]*>/,
+    `<meta name="twitter:image" content="${ogImage}" />`,
+    "twitter:image"
   );
 
   const shell =
