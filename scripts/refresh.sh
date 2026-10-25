@@ -69,20 +69,39 @@ if [ "$teams" -gt 0 ]; then
   # `add` before the check rather than `git diff`.
   git add "${DATA_PATHS[@]}"
   if git diff --cached --quiet -- "${DATA_PATHS[@]}"; then
-    echo "$(date)  no data change ($teams teams) — nothing to push"
+    echo "$(date)  no data change ($teams teams)"
   else
-    echo "$(date)  data changed — committing and pushing to $BRANCH …"
+    echo "$(date)  data changed — committing to $BRANCH …"
     # The pathspec keeps anything else you had staged out of the bot's commit.
     git commit -m "chore: nightly WNBA data refresh" -- "${DATA_PATHS[@]}"
-    if git push origin "$BRANCH"; then
+  fi
+
+  # Push whenever master is ahead, not only when tonight changed something, so
+  # a commit stranded by an earlier failed push still goes out on a quiet night.
+  if [ -n "$(git rev-list "origin/$BRANCH..$BRANCH")" ]; then
+    # GitHub's SSH endpoint drops the odd connection ("Connection closed by …
+    # port 22"); one of those on 25 Oct held Finals data back a whole day. A
+    # couple of spaced-out retries ride that out.
+    pushed=""
+    for wait in 0 60 300; do
+      [ "$wait" -gt 0 ] && { echo "$(date)  push failed — retrying in ${wait}s"; sleep "$wait"; }
+      git push origin "$BRANCH" && { pushed=1; break; }
+    done
+    if [ -n "$pushed" ]; then
       note=""
       [ "$carried" -gt 0 ] && note=" — $carried league-wide dataset(s) carried over from the previous fetch"
       echo "$(date)  pushed refresh ($teams teams)$note"
+      # What the GitHub workflow used to do after its push: tell Bing & co.
+      # which pages changed, once Vercel serves them. Best-effort — a failed
+      # ping never fails the refresh.
+      npm run indexnow -- --wait || echo "$(date)  IndexNow submit failed (data is still deployed)"
     else
       # The commit stays local; the next run's pull + push sends it along.
       echo "$(date)  PUSH FAILED — refresh committed locally but not deployed"
       exit 1
     fi
+  else
+    echo "$(date)  $BRANCH already matches origin — nothing to push"
   fi
 else
   echo "$(date)  fetch returned no teams — likely blocked; skipping commit"

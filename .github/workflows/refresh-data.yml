@@ -6,11 +6,16 @@ name: Refresh WNBA data
 #
 # This only touches the season in progress. Completed seasons are fetched once
 # (npm run fetch -- --missing) and committed by hand; they never change.
+#
+# Manual only. stats.wnba.com stopped answering GitHub's runners in late
+# September 2026 (every run timed out on the first request), so the nightly
+# refresh now runs on the Mac via launchd — scripts/refresh.sh, see HOSTING.md.
+# Restore the schedule below if a test run from the Actions tab succeeds again.
 
 on:
-  schedule:
-    - cron: "0 11 * * *" # 11:00 UTC nightly (~3-4am US Pacific). UTC only; adjust as you like.
-  workflow_dispatch: {} # also lets you trigger a refresh by hand from the Actions tab
+  # schedule:
+  #   - cron: "0 11 * * *" # 11:00 UTC nightly (~3-4am US Pacific)
+  workflow_dispatch: {} # trigger a refresh by hand from the Actions tab
 
 permissions:
   contents: write # needed so the workflow can push the updated data file
