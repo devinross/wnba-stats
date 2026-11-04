@@ -754,10 +754,7 @@ function jsonLdFor({ team, player, path, view }) {
 const f1 = (n) => Number(n).toFixed(1);
 const signed = (n) => `${n > 0 ? "+" : ""}${f1(n)}`;
 const money = (v) => (v >= 1e6 ? `$${f1(v / 1e6)}M` : `$${Math.round(v / 1000)}K`);
-const lastName = (name) => {
-  const words = String(name).trim().split(/\s+/);
-  return words.length > 1 ? [words[0], words.slice(1).join(" ")] : [name];
-};
+const lastWord = (name) => String(name).trim().split(/\s+/).at(-1);
 
 function cardFor({ team, player, view }) {
   const eyebrow = `${season} season`;
@@ -766,9 +763,8 @@ function cardFor({ team, player, view }) {
     const years = index.seasons.map((s) => Number(s.season));
     return {
       eyebrow: `${Math.min(...years)}–${Math.max(...years)}`,
-      lines: ["WNBA", "Trends."],
-      subtitle: "Every team-season on one chart.",
-      chips: ["Shot profile vs win %", "Off vs def rating", "Franchise paths"],
+      title: "WNBA Trends",
+      detail: "Every team-season on one chart",
     };
   }
 
@@ -777,8 +773,7 @@ function cardFor({ team, player, view }) {
     return view === "salaries"
       ? {
           eyebrow,
-          lines: [`${season} WNBA`, "Salaries."],
-          subtitle: "Every contract next to what the player produced.",
+          title: `${season} WNBA Salaries`,
           stats: [
             { value: String(salaries.meta.withSalary), label: "Contracts" },
             { value: paid[0] ? money(paid[0].salary) : "—", label: "Top salary" },
@@ -786,12 +781,11 @@ function cardFor({ team, player, view }) {
           ],
         }
       : {
-          eyebrow,
-          lines: ["Virtual", "GM."],
-          subtitle: `Build a ${season} roster under the cap.`,
+          eyebrow: `Build a ${season} roster under the cap`,
+          title: "Virtual GM",
           stats: [
             { value: money(salaries.meta.capHint), label: "Default cap" },
-            { value: String(salaries.meta.withSalary), label: "Signable players" },
+            { value: String(salaries.meta.withSalary), label: "Signable" },
             { value: String(salaries.meta.rosterTarget), label: "Roster spots" },
           ],
         };
@@ -800,22 +794,22 @@ function cardFor({ team, player, view }) {
   if (player) {
     const s = playerSummary(player);
     const role = positionLabel(player.pos);
-    const sub = [player.num && `#${player.num}`, role && role[0].toUpperCase() + role.slice(1), team.name]
-      .filter(Boolean)
-      .join(" · ");
     return {
-      eyebrow,
       team,
-      lines: lastName(player.name),
-      subtitle: sub,
-      stats: s
-        ? [
-            { value: f1(s.ppg), label: "PPG" },
-            { value: f1(s.rpg), label: "RPG" },
-            { value: f1(s.apg), label: "APG" },
-            { value: `${f1(s.ts)}%`, label: "TS%" },
-          ]
-        : [{ value: "—", label: `No ${season} games yet` }],
+      eyebrow: [player.num && `#${player.num}`, role && role[0].toUpperCase() + role.slice(1), team.name]
+        .filter(Boolean)
+        .join(" · "),
+      title: player.name,
+      ...(s
+        ? {
+            stats: [
+              { value: f1(s.ppg), label: "PPG" },
+              { value: f1(s.rpg), label: "RPG" },
+              { value: f1(s.apg), label: "APG" },
+              { value: `${f1(s.ts)}%`, label: "TS%" },
+            ],
+          }
+        : { detail: `No ${season} games yet` }),
     };
   }
 
@@ -823,25 +817,24 @@ function cardFor({ team, player, view }) {
     const s = teamSummary(team);
     const ranks = (league.teamRanks?.teams || []).slice().sort((a, b) => b.net - a.net);
     const netRank = ranks.findIndex((t) => t.teamId === team.id);
-    const lines = team.city && team.teamName && team.name !== team.teamName ? [team.city, team.teamName] : [team.name];
     return {
-      eyebrow,
       team,
-      lines,
-      subtitle: isArchive ? "Shot charts, four factors & lineups" : "Team stats, shot charts & lineups",
-      stats: s.gp
-        ? [
-            { value: `${s.wins}–${s.losses}`, label: "Record" },
-            { value: f1(s.ppg), label: "PPG" },
-            s.rank ? { value: signed(s.rank.net), label: "Net rating" } : { value: signed(s.margin), label: "Margin" },
-            ...(netRank >= 0 ? [{ value: `#${netRank + 1}`, label: "Net rank" }] : []),
-          ]
-        : [{ value: "—", label: `No ${season} games yet` }],
+      eyebrow: netRank >= 0 ? `${eyebrow} · #${netRank + 1} net rating` : eyebrow,
+      title: team.name,
+      ...(s.gp
+        ? {
+            stats: [
+              { value: `${s.wins}–${s.losses}`, label: "Record" },
+              { value: f1(s.ppg), label: "PPG" },
+              s.rank ? { value: signed(s.rank.net), label: "Net rating" } : { value: signed(s.margin), label: "Margin" },
+            ],
+          }
+        : { detail: `No ${season} games yet` }),
     };
   }
 
-  // A season's landing page: the champion if there is one, else the best record,
-  // and the scoring leader.
+  // A season's landing page: the champion if there is one, the best record and
+  // the scoring leader.
   const teamById = new Map(league.teams.map((t) => [t.id, t]));
   const finals = (league.playoffs?.rounds || []).at(-1)?.series?.[0];
   const champ = finals?.winner ? teamById.get(finals.winner) : null;
@@ -849,17 +842,16 @@ function cardFor({ team, player, view }) {
   const bestTeam = best && teamById.get(best.teamId);
   const scorer = league.leaders?.pts?.[0];
   const stats = [];
-  if (champ) stats.push({ value: champ.teamName, label: "Champion" });
   if (bestTeam) stats.push({ value: `${bestTeam.abbr} ${best.w}–${best.l}`, label: "Best record" });
-  if (scorer) stats.push({ value: `${f1(scorer.v)} PPG`, label: `${lastName(scorer.name).at(-1)}, top scorer` });
+  if (scorer) stats.push({ value: f1(scorer.v), label: `PPG, ${lastWord(scorer.name)}` });
   return {
-    eyebrow: isArchive ? `${season} season · final` : eyebrow,
-    lines: isArchive ? [`${season} WNBA`, "Season."] : ["WNBA", "Stats."],
-    subtitle: isArchive
-      ? "Final standings, leaders, shot charts & lineups."
-      : "Standings, shot charts, lineups & on/off — nightly.",
-    stats: stats.length ? stats : undefined,
-    chips: stats.length ? undefined : ["Shot zones", "Four factors", "Lineups", "On/off", "League ranks"],
+    // The champion rides in the eyebrow: a nickname in the stat row would set
+    // every number in it down to its size.
+    eyebrow: [isArchive ? `${season} season · final` : eyebrow, champ && `${champ.teamName} champions`]
+      .filter(Boolean)
+      .join(" · "),
+    title: isArchive ? `${season} WNBA Season` : "WNBA Stats",
+    ...(stats.length ? { stats } : { detail: "Shot charts, four factors & lineups" }),
   };
 }
 
